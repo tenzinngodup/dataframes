@@ -1,0 +1,25 @@
+{
+  "name": "dataframes",
+  "version": "0.0.1",
+  "description": "Data manipulation and analysis tools for JavaScript, inspired by R's dplyr and Python's pandas.",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://git@github.com/danrobinson/dataframes.git"
+  },
+  "keywords": [
+    "data",
+    "analysis",
+    "manipulation",
+    "statistics"
+  ],
+  "author": "Dan Robinson <danrobinson010@gmail.com>",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/danrobinson/dataframes/issues"
+  },
+  "homepage": "https://github.com/danrobinson/dataframes#readme"
+}
