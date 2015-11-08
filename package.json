@@ -6,6 +6,11 @@
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   },
+    "dependencies": {
+    "console.table": "^0.4.0",
+    "jStat": "~1.4.6",
+    "sprintf-js": "^1.0.3"
+  },
   "repository": {
     "type": "git",
     "url": "git+ssh://git@github.com/danrobinson/dataframes.git"
