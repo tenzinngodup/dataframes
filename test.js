@@ -29,3 +29,6 @@ var data = [
 
 var df = new DataFrame(data);
 df.show();
+console.log(df.cell(2, 4));
+console.log(df.row(2).toString());
+console.log(df.columns.inauguration_year.toArray());
