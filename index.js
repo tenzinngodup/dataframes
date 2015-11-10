@@ -1,159 +1,112 @@
-var jStat = require("jStat").jStat;
-require('console.table');
-
-function retNull() { return null; }
-
-jStat.nulls = function(rows, cols) {
-  if (!jStat.utils.isNumber(cols))
-    cols = rows;
-  return jStat.create(rows, cols, retNull);
-}
-
-jStat.emptyArrays = function(rows, cols) {
-  if (!jStat.utils.isNumber(cols)) {
-    cols = rows;
-  }
-  var emptyArray = new Array(rows);
-  for (var rowIndex = 0; rowIndex < rows; rowIndex++) {
-    emptyArray[rowIndex] = new Array(cols);
-  }
-  return emptyArray;
-}
-
-function RowIterator(df) {
-  this.dataFrame = df;
-  this.numRows = df.numRows;
-  this.rowIndex = 0;
-}
-
-RowIterator.prototype.next() {
-  if (this.index <= this.numRows) {
-    return { done: false, value: RowPointer(this.rowIndex) }
-  } else {
-    return { done: true }
-  }
-}
-
-function RowPointer = function(df, rowIndex) {
+function Row(df, rowData) {
   this.df = df;
+  var columnNames = df.columnNames;
+  var columnTypes = df.columnTypes;
+  for (var i = 0; i < columnNames.length; i++) {
+    var name = columnNames[i];
+    var type = columnTypes[i];
+    var value = rowData[name];
+    if (typeof(value) === type) {
+      this[name] = value;
+    } else {
+      this[name] = null;
+    }
+  }
 }
 
-function DataFrame(data, options) {
+Row.prototype.show = function() {
+  var columnNames = this.df.columnNames;
+  var rowString = "";
+  for (var i = 0; i < columnNames.length; i++) {
+    var name = columnNames[i];
+    rowString += this[name] + " ";
+  }
+  console.log(rowString);
+}
+
+function DataFrame(data) {
   if (data.length) {
-    if (options && typeof options == "object" && options.type) {
-      switch (options.type) {
-        case "columns":
-          this.initWithColumns(data);          
-          break;
-        case "rows":
-          this.initWithRows(data);
-          break;
-      }
-    } else {
-      this.initWithRows(data);          
-    }    
-  } else {
-    this.numRows = 0;
-    this.columns = [];
+    this.setColumnNames(data[0]);
+    this.setColumnTypes(data[0]);
+    this.setColumns();
   }
+  var rowArray = [];
+  var row;
+  for (var i = 0; i < data.length; i++) {
+    row = new Row(this, data[i]);
+    rowArray.push(row);
+  }
+  this.rowArray = rowArray;
 }
 
-DataFrame.prototype.initWithColumns = function(data) {
-  this.numRows = data[0].length;
-  this.columns = new Array(data.length);
-  for (var columnIndex in data) {
-    var column = data[columnIndex];
-    if (column.length != this.numRows) {
-      var emptyColumn = newArray(this.numRows);
-      for (var i = 0; i < column.length; i++) {
-        newColumn[i] = null;
-      }
-      this.columns[columnIndex] = emptyColumn;
-    } else {
-      this.columns[columnIndex] = column;     
-    }
-  }
-}
-  
-DataFrame.prototype.initWithRows = function(data) {
-  this.numRows = data.length;
-  var numCols = this.numRows > 0 ? data[0].length : 0;
-  this.columns = jStat.emptyArrays(numCols, this.numRows);
-  for (var rowIndex = 0; rowIndex < data.length; rowIndex++) {
-    var row = data[rowIndex];
-    while (row.length > this.columns.length) {
-      this.columns.push(jStat.nulls(this.numRows, 1));
-    }
-    var colIndex = 0;
-    while (colIndex < row.length) {
-      this.columns[colIndex][rowIndex] = row[colIndex];
-      colIndex++;
-    }
-    while (colIndex < this.columns.length) {
-      this.columns[colIndex] = null;
-      colIndex++;
-    }
-  }
+DataFrame.prototype.setColumnNames = function(rowData) {
+  this.columnNames = Object.keys(rowData);
 }
 
-DataFrame.prototype.addColumn = function(column) {
-  if(this.columnArray.length === 0) {
-    this.numRows = 0;
-  } else {
-    if (columnArray.length !== this.numRows) {
-      console.log("Error: new column has wrong number of rows.");
-      return;
-    }
+DataFrame.prototype.setColumnTypes = function(rowData) {
+  var columnTypes = [];
+  var name, value, valueType;
+  for (var i = 0; i < this.columnNames.length; i++) {
+    name = this.columnNames[i];
+    value = rowData[name];
+    valueType = typeof(value);
+    columnTypes.push(valueType);
   }
-  this.columns.push(columnArray);
-}
-  
-DataFrame.prototype.applymap = function(func) {
-  // apply a function to every element
-  return this.apply(function(column) { column.map(func) });
+  this.columnTypes = columnTypes;
 }
 
-DataFrame.prototype.apply = function(func, axis) {
-  // apply a function to every column or row
-  if (axis === 1) {
-    var newRows = new Array(this.numRows);
-    for (var i = 0; i < this.numRows; i++) {
-      newRows[i] = (func(this.row(i)), i);
-    }
-    var newDf = new DataFrame(newRows, {type: "rows"});
-    return newDf;
-  } else {
-    var newCols = this.columns.map(func);
-    var newDf = new DataFrame(newCols, {type: "cols"});
-    return newDf;
+DataFrame.prototype.setColumns = function() {
+  var columns = [];
+  var name, type;
+  for (var i = 0; i < this.columnNames.length; i++) {
+    name = this.columnNames[i];
+    type = this.columnTypes[i];
+    var column = new Column(this, name, type, i);
+    columns[name] = column;
+    columns.push(column);
   }
+  this.columns = columns;
 }
 
 DataFrame.prototype.row = function(rowIndex) {
-  var row = this.columns.map(function(column) { return column[rowIndex] });
-  return row;
+  return this.rowArray[rowIndex];
+}
+
+DataFrame.prototype.column = function(colIndex) {
+  var column = this.rowArray.map(function(row) { return row[colIndex] });
+  return column;
 }
 
 DataFrame.prototype.slice = function(startIndex, endIndex) {
-  var newCols = this.columns.map(function(column) { return column.slice(startIndex, endIndex) });
-  var newDF = new DataFrame(newCols, {type: "columns"});
-  return newDF;
+  return new DataFrame(this.rowArray.slice(startIndex, endIndex));
 }
 
-DataFrame.prototype.col = function(colIndex) {
-  return this.columns[colIndex];
+DataFrame.prototype.row = function(rowIndex) {
+  return this.rowArray[rowIndex];
 }
 
 DataFrame.prototype.cell = function(rowIndex, colIndex) {
-  return this.columns[colIndex][rowIndex];
+  return this.rowArray[rowIndex][colIndex];
 }
 
 DataFrame.prototype.show = function() {
-  console.log("Rows: %d", this.numRows);
-  console.table(jStat.transpose(this.columns));
-  console.log(this.columns[0][4]);
+  console.log(this.columnNames.join(" "));
+  for (var rowIndex = 0; rowIndex < this.rowArray.length; rowIndex++) {
+    this.rowArray[rowIndex].show();
+  }
 }
 
+function Column(df, name, type, index) {
+  this.df = df;
+  this.name = name;
+  this.type = type;
+  this.index = index;
+}
+
+Column.prototype.get = function(rowIndex) {
+  var row = this.df.row(rowIndex)
+  return row[this.name];
+}
 
 
 module.exports = DataFrame;

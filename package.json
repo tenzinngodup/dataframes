@@ -1,15 +1,10 @@
 {
   "name": "dataframes",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Data manipulation and analysis tools for JavaScript, inspired by R's dplyr and Python's pandas.",
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
-  },
-    "dependencies": {
-    "console.table": "^0.4.0",
-    "jStat": "~1.4.6",
-    "sprintf-js": "^1.0.3"
   },
   "repository": {
     "type": "git",
