@@ -1,6 +1,7 @@
 var Promise = require("bluebird");
 var Rx = require("rx");
 
+
 var copySchema = function(schema, selectedNames, changedNames) {
   var columnNames = schema.columnNames;
   var columnTypes = schema.columnTypes;
@@ -20,6 +21,129 @@ var copySchema = function(schema, selectedNames, changedNames) {
   return {columnNames: newColumnNames, columnTypes: newColumnTypes};
 }
 
+/* Credited to jlongster: https://github.com/jlongster/transducers.js/blob/master/transducers.js */
+function compose(funcs) {
+  return function(r) {
+    var value = r;
+    for(var i=funcs.length-1; i>=0; i--) {
+      value = funcs[i](value);
+    }
+    return value;
+  }
+}
+
+/*
+Initializes with an object.
+*/
+
+var ParallelTransformer = function(xform) {
+  this._xform = xform;
+}
+
+ParallelTransformer.prototype['@@transducer/init'] = function(init) {
+  return this._xform["@@transducer/init"]({});
+};
+
+ParallelTransformer.prototype['@@transducer/result'] = function(res) {
+  return this._xform["@@transducer/result"](res);
+};
+
+ParallelTransformer.prototype['@@transducer/step'] = function(res, input) {
+  return this._xform["@@transducer/step"](res, input);
+};
+
+/*
+SingleTransformer: Saves the results of a transformation under a particular key.
+*/
+
+var SingleTransformer = function(name, singleXform, xform) {
+  this._name = name;
+  this._singleXform = singleXform;
+  this._xform = xform;
+}
+
+SingleTransformer.prototype['@@transducer/init'] = function(init) {
+  init[this._name] = this._singleXform["@@transducer/init"](init);
+  return this._xform["@@transducer/init"](init);
+};
+
+SingleTransformer.prototype['@@transducer/result'] = function(res) {
+  res[this._name] = this._singleXform["@@transducer/result"](res[this._name]);
+  return this._xform["@@transducer/result"](res);
+};
+
+SingleTransformer.prototype['@@transducer/step'] = function(res, input) {
+  res[this._name] = this._singleXform["@@transducer/step"](res[this._name], input);
+  return this._xform["@@transducer/step"](res, input);
+};
+
+/*
+RowReducer: Turns an object into a row.
+*/
+
+var RowReducer = function(xform) {
+  this._xform = xform;
+}
+
+RowReducer.prototype['@@transducer/init'] = function(init) {
+  return this._xform["@@transducer/init"](init);
+};
+
+RowReducer.prototype['@@transducer/result'] = function(res) {
+  var row = new Row(res, Row.getSchema(res));
+  return this._xform["@@transducer/result"](row);
+};
+
+RowReducer.prototype['@@transducer/step'] = function(res, input) {
+  return this._xform["@@transducer/step"](res, input);
+};
+
+
+NonTransformer = function() {};
+
+NonTransformer.prototype['@@transducer/init'] = function(init) {
+  return init;
+};
+
+NonTransformer.prototype['@@transducer/result'] = function(res) {
+  return res;
+};
+
+NonTransformer.prototype['@@transducer/step'] = function(res, input) {
+  return res;
+};
+
+var GenericReducer = function(accumulator, xform) {
+  this._accumulator = accumulator;
+  this._xform = xform;
+}
+
+GenericReducer.prototype['@@transducer/init'] = function(init) {
+  return null;
+};
+
+GenericReducer.prototype['@@transducer/result'] = function(res) {
+  return res;
+};
+
+GenericReducer.prototype['@@transducer/step'] = function(res, input) {
+  return this._accumulator(res, input);
+};
+
+var parallelTransform = function(xform) {
+  return new ParallelTransformer(xform);
+}
+
+var singleTransform = function(name, singleXform) {
+  return function(xform) {
+    return new SingleTransformer(name, singleXform, xform);    
+  }
+}
+
+var rowReduce = function(xform) {
+  return new RowReducer(xform);
+}
+
 var swap = function(obj) {
   // swap keys and values
 
@@ -34,13 +158,12 @@ var DataFrame = function(data, options) {
   options = options || {};
   var rowArray = [];
   if (data.length) {
-    var schema = options.schema || this.getSchema(data[0]);
+    var schema = options.schema || Row.getSchema(data[0]);
     if (!schema.hasOwnProperty("columnTypes")) {
       schema.columnTypes = this.getColumnTypes(data[0], schema.columnNames);
     }
     this.schema = schema;
     this.setColumns();
-
     if (options.safe) {
       rowArray = data;
     } else {
@@ -119,13 +242,13 @@ DataFrame.prototype.rename = function(namesToChange) {
   return this;
 }
 
+
 DataFrame.prototype.distinct = function() {
   var distinctObjects = Object.create(null);
   var distinctColumns = arguments.length > 0 ? [] : undefined;
   for (var i = 0; i < arguments.length; i++) {
     var arg = arguments[i];
     var argType = typeof arg;
-    console.log(this.schema);
     if (argType === "string") {
       distinctColumns.push(arg);      
     }
@@ -145,7 +268,6 @@ DataFrame.prototype.distinct = function() {
       return true;
     }
     var uniqueString = row.toUniqueString(filteredDistinctColumns);
-    console.log(uniqueString);
     if (distinctObjects[uniqueString] !== undefined) {
       return false;
     } else {
@@ -156,32 +278,55 @@ DataFrame.prototype.distinct = function() {
   return this;
 }
 
+DataFrame.prototype.summarize = function(summaries) {
+  if (typeof(summaries) !== "object") {
+    return this;
+  }
+  var summaryColumns = Object.keys(summaries);
+  var rowTransformer = new RowReducer(new NonTransformer);
+  for (var i = 0; i < summaryColumns.length; i++) {
+    var name = summaryColumns[i];
+    var obj = summaries[name];
+    var columnTransformer;
+    if (!obj["@@transducer/step"]) {
+      // this is not a transformer, so make one
+      // assuming for now that it's an accumulator function
+      columnTransformer = new GenericReducer(obj);
+    } else {
+      columnTransformer = obj;
+    }
+    var columnTransducer = singleTransform(name, columnTransformer); 
+    rowTransformer = columnTransducer(rowTransformer);
+  }
+  rowTransformer = parallelTransform(rowTransformer);
+  var result = rowTransformer["@@transducer/init"]();
+  var observer = Rx.Observer.create(
+    function(nextValue) {
+      result = rowTransformer["@@transducer/step"](result, nextValue);
+      console.log(result);
+      console.log(nextValue);
+    }, function(error) {
+      console.log(error);
+    }, function() {
+      result = rowTransformer["@@transducer/result"](result);
+      console.log(result);
+      console.log("Completed");
+    }
+  );
+  this.sequence.subscribe(observer);
+  return this;
+}
+
+DataFrame.prototype.summarise = DataFrame.prototype.summarize;
+
 DataFrame.prototype.collect = function() {
   var promiseArray = this.sequence.toArray().toPromise(Promise);
   var promiseDF = promiseArray.then(function(newArray) {
-      var schema = newArray[0].schema;
-      var df = new DataFrame(newArray, {schema: schema, safe: true});
-      return df;
-    });
+    var schema = newArray[0].schema;
+    var df = new DataFrame(newArray, {schema: schema, safe: true});
+    return df;
+  });
   return promiseDF;
-}
-
-DataFrame.prototype.getSchema = function(rowData) {
-  var columnNames = Object.keys(rowData);  
-  var columnTypes = this.getColumnTypes(rowData, columnNames);
-  return {columnNames: columnNames, columnTypes: columnTypes};
-}
-
-DataFrame.prototype.getColumnTypes = function(rowData, columnNames) {
-  var columnTypes = [];
-  var name, value, valueType;
-  for (var i = 0; i < columnNames.length; i++) {
-    name = columnNames[i];
-    value = rowData[name];
-    valueType = typeof value;
-    columnTypes.push(valueType);
-  }
-  return columnTypes;
 }
 
 DataFrame.prototype["@@iterator"] = function() {
@@ -317,6 +462,24 @@ var Row = function(rowData, schema, changedNames) {
       }
     }
   }
+}
+
+Row.getSchema = function(rowData, columnNames) {
+  var columnNames = columnNames || Object.keys(rowData);  
+  var columnTypes = this.getColumnTypes(rowData, columnNames);
+  return {columnNames: columnNames, columnTypes: columnTypes};
+}
+
+Row.getColumnTypes = function(rowData, columnNames) {
+  var columnTypes = [];
+  var name, value, valueType;
+  for (var i = 0; i < columnNames.length; i++) {
+    name = columnNames[i];
+    value = rowData[name];
+    valueType = typeof value;
+    columnTypes.push(valueType);
+  }
+  return columnTypes;
 }
 
 Row.prototype.get = function(colIdentifier) {

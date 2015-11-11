@@ -44,13 +44,21 @@ df = df
   .mutate("years_in_office", function(row) { return row.last_year - row.inauguration_year; })
   .select("first_name", "last_name", "years_in_office", {"years_in_office": "years"})
   .rename({"first_name": "first", "last_name": "last"})
-  .distinct("first");
-df.show();
-console.log(" ")
-var promise = df.collect();
-promise.then(function(newDf) {
+  .distinct("first")
+  .summarize(
+    {
+      "total_years": 
+        function(result, row) {
+          return result + row["years"];
+        },
+      "combined_first_names":
+        function(result, row) {
+          return "" + result + row["first"] + " ";
+        }
+  });
+/*df.collect().then(function(newDf) {
   newDf.show();
 }, function(error) {
   throw error;
-});
+});*/
 
