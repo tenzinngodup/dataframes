@@ -21,6 +21,25 @@ var copySchema = function(schema, selectedNames, changedNames) {
   return {columnNames: newColumnNames, columnTypes: newColumnTypes};
 }
 
+var clone = function(original) {
+  // hackish but close enough for now
+  if (typeof original === "object") {
+    var copy = {}
+    for (var key in original) {
+      copy[key] = original[key];
+    }
+    return copy;
+  } else if (typeof original === "array") {
+    copy = [];
+    for (var i = 0; i < init.length; i++) {
+      copy.push(original[i]);
+    }
+  } else {
+    return init;
+  }
+}
+
+
 /* Credited to jlongster: https://github.com/jlongster/transducers.js/blob/master/transducers.js */
 function compose(funcs) {
   return function(r) {
@@ -32,9 +51,132 @@ function compose(funcs) {
   }
 }
 
+function Filter(f, xform) {
+  this.xform = xform;
+  this.f = f;
+}
+
+Filter.prototype['@@transducer/init'] = function(init) {
+  return this.xform['@@transducer/init'](init);
+};
+
+Filter.prototype['@@transducer/result'] = function(res) {
+  return this.xform['@@transducer/result'](res);
+};
+
+Filter.prototype['@@transducer/step'] = function(res, input) {
+  if(this.f(input)) {
+    return this.xform['@@transducer/step'](res, input);
+  }
+  return res;
+};
+
+function filter(f) {
+  return function(xform) {
+    return new Filter(f, xform);
+  };
+}
+
+function Map(f, xform) {
+  this.xform = xform;
+  this.f = f;
+}
+
+Map.prototype['@@transducer/init'] = function() {
+  return this.xform['@@transducer/init']();
+};
+
+Map.prototype['@@transducer/result'] = function(v) {
+  return this.xform['@@transducer/result'](v);
+};
+
+Map.prototype['@@transducer/step'] = function(res, input) {
+  return this.xform['@@transducer/step'](res, this.f(input));
+};
+
+function map(f) {
+  return function(xform) {
+    return new Map(f, xform);
+  }
+}
+
+var DataFrameBuilder = function(xform) {
+  this._xform = xform;
+}
+
+DataFrameBuilder.prototype['@@transducer/init'] = function(init) {
+  return this._xform["@@transducer/init"](init);
+};
+
+DataFrameBuilder.prototype['@@transducer/result'] = function(res) {
+  res = this._xform["@@transducer/result"](res);
+  return new DataFrame([res], {schema: res.schema, safe: true});
+};
+
+DataFrameBuilder.prototype['@@transducer/step'] = function(res, input) {
+  return this._xform["@@transducer/step"](res, input);
+};
+
+var GroupByTransformer = function(keyFunction, groupTransformer, xform) {
+  this._keyFunction = keyFunction;
+  this._groupTransformer = groupTransformer;
+  this._xform = xform;
+}
+
+GroupByTransformer.prototype['@@transducer/init'] = function(init) {
+  this._init = init;
+  return this._xform["@@transducer/init"]({});
+};
+
+GroupByTransformer.prototype['@@transducer/result'] = function(res) {
+  res[this._name] = this._singleXform["@@transducer/result"](res[this._name]);
+  return this._xform["@@transducer/result"](res);
+};
+
+GroupByTransformer.prototype['@@transducer/step'] = function(res, input) {
+  var key = this._keyFunction(input);
+  var groupRes;
+  if (res.hasOwnKey(key)) {
+    groupRes = res[key];
+  } else {
+    groupRes = this._groupTransformer["@@transducer/init"](clone(this._init));
+  }
+  res[key] = this._groupTransformer["@@transducer/step"](groupRes, input);
+  return this._xform["@@transducer/step"](res, input);
+};
+
+var SummarizerTransformer = function(summaryTransformer, xform) {
+  this._summaryTransformer = summaryTransformer;
+  this._xform = xform;
+}
+
+GroupByTransformer.prototype['@@transducer/init'] = function(init) {
+  this._init = init;
+  return this._xform["@@transducer/init"]({});
+};
+
+GroupByTransformer.prototype['@@transducer/result'] = function(res) {
+  res[this._name] = this._singleXform["@@transducer/result"](res[this._name]);
+  return this._xform["@@transducer/result"](res);
+};
+
+GroupByTransformer.prototype['@@transducer/step'] = function(res, input) {
+  var key = this._keyFunction(input);
+  var groupRes;
+  if (res.hasOwnKey(key)) {
+    groupRes = res[key];
+  } else {
+    groupRes = this._groupTransformer["@@transducer/init"](clone(this._init));
+  }
+  res[key] = this._groupTransformer["@@transducer/step"](groupRes, input);
+  return this._xform["@@transducer/step"](res, input);
+};
+
+
 /*
 Initializes with an object.
 */
+
 
 var ParallelTransformer = function(xform) {
   this._xform = xform;
@@ -99,6 +241,10 @@ RowReducer.prototype['@@transducer/step'] = function(res, input) {
 };
 
 
+var NonTransformer = function(xform) {
+  this._xform = xform;
+}
+
 NonTransformer = function() {};
 
 NonTransformer.prototype['@@transducer/init'] = function(init) {
@@ -144,6 +290,10 @@ var rowReduce = function(xform) {
   return new RowReducer(xform);
 }
 
+var dataFrameBuild = function(xform) {
+  return new DataFrameBuilder(xform);
+}
+
 var swap = function(obj) {
   // swap keys and values
 
@@ -173,18 +323,19 @@ var DataFrame = function(data, options) {
     }
   }
   this.rowArray = rowArray;
-  this.sequence = Rx.Observable.from(this.rowArray);
+  this.transformer = new NonTransformer();
+  this.transducers = [];
 }
 
 DataFrame.prototype.filter = function(func) {
-  this.sequence = this.sequence.filter(func);
+  this.transducers.push(filter(func));
   return this;
 }
 
 DataFrame.prototype.mutate = function(newColumnName, func) {
   var newSchema = undefined;
   var newType = undefined;
-  this.sequence = this.sequence.map(function(row) {
+  var transducer = map(function(row) {
     var value = func(row);
     var newRow = Object.create(row);
     if (typeof newSchema === "undefined") {
@@ -197,6 +348,7 @@ DataFrame.prototype.mutate = function(newColumnName, func) {
     newRow[newColumnName] = (typeof value === newType) ? value : null;
     return newRow;
   });
+  this.transducers.push(transducer);
   return this;
 }
 
@@ -215,7 +367,7 @@ DataFrame.prototype.select = function() {
     }
   }
   var newSchema = undefined;
-  this.sequence = this.sequence.map(function(row) {
+  var transducer = map(function(row) {
     if (typeof newSchema === "undefined") {
       newSchema = copySchema(row.schema, newNames, namesToChange);
     }
@@ -223,6 +375,7 @@ DataFrame.prototype.select = function() {
     var newRow = new Row(row, newSchema, changedNames);
     return newRow;
   });
+  this.transducers.push(transducer);
   return this;
 }
 
@@ -231,7 +384,7 @@ DataFrame.prototype.rename = function(namesToChange) {
     return this;
   }
   var newSchema = undefined;
-  this.sequence = this.sequence.map(function(row) {
+  var transducer = map(function(row) {
     if (typeof newSchema === "undefined") {
       newSchema = copySchema(row.schema, undefined, namesToChange);
     }
@@ -239,6 +392,7 @@ DataFrame.prototype.rename = function(namesToChange) {
     var newRow = new Row(row, newSchema, changedNames);
     return newRow;
   });
+  this.transducers.push(transducer);
   return this;
 }
 
@@ -254,7 +408,7 @@ DataFrame.prototype.distinct = function() {
     }
   }
   var filteredDistinctColumns = undefined;
-  this.sequence = this.sequence.filter(function(row) {
+  var transducer = filter(function(row) {
     if (filteredDistinctColumns == undefined) {
       filteredDistinctColumns = [];
       for (var i = 0; i < distinctColumns.length; i++) {
@@ -275,6 +429,7 @@ DataFrame.prototype.distinct = function() {
       return true;
     }
   });
+  this.transducers.push(transducer);
   return this;
 }
 
@@ -283,7 +438,7 @@ DataFrame.prototype.summarize = function(summaries) {
     return this;
   }
   var summaryColumns = Object.keys(summaries);
-  var rowTransformer = new RowReducer(new NonTransformer);
+  this.transducers.push(parallelTransform);
   for (var i = 0; i < summaryColumns.length; i++) {
     var name = summaryColumns[i];
     var obj = summaries[name];
@@ -295,38 +450,25 @@ DataFrame.prototype.summarize = function(summaries) {
     } else {
       columnTransformer = obj;
     }
-    var columnTransducer = singleTransform(name, columnTransformer); 
-    rowTransformer = columnTransducer(rowTransformer);
+    this.transducers.push(singleTransform(name, columnTransformer));
   }
-  rowTransformer = parallelTransform(rowTransformer);
-  var result = rowTransformer["@@transducer/init"]();
-  var observer = Rx.Observer.create(
-    function(nextValue) {
-      result = rowTransformer["@@transducer/step"](result, nextValue);
-      console.log(result);
-      console.log(nextValue);
-    }, function(error) {
-      console.log(error);
-    }, function() {
-      result = rowTransformer["@@transducer/result"](result);
-      console.log(result);
-      console.log("Completed");
-    }
-  );
-  this.sequence.subscribe(observer);
+  this.transducers.push(rowReduce);
   return this;
 }
 
 DataFrame.prototype.summarise = DataFrame.prototype.summarize;
 
 DataFrame.prototype.collect = function() {
-  var promiseArray = this.sequence.toArray().toPromise(Promise);
-  var promiseDF = promiseArray.then(function(newArray) {
-    var schema = newArray[0].schema;
-    var df = new DataFrame(newArray, {schema: schema, safe: true});
-    return df;
-  });
-  return promiseDF;
+  this.transducers.push(dataFrameBuild);
+  var transducer = compose(this.transducers);
+  var transformer = transducer(this.transformer);
+  var result = transformer["@@transducer/init"]();
+  var row;
+  for (var i = 0; i < this.rowArray.length; i++) {
+    row = this.rowArray[i];
+    result = transformer["@@transducer/step"](result, row);
+  }
+  return transformer["@@transducer/result"](result);
 }
 
 DataFrame.prototype["@@iterator"] = function() {

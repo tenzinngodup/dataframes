@@ -53,12 +53,8 @@ df = df
         },
       "combined_first_names":
         function(result, row) {
+          result = result || "";
           return "" + result + row["first"] + " ";
         }
   });
-/*df.collect().then(function(newDf) {
-  newDf.show();
-}, function(error) {
-  throw error;
-});*/
-
+df.collect().show();
