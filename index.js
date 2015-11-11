@@ -51,6 +51,35 @@ function compose(funcs) {
   }
 }
 
+var Operation = function() {
+  
+}
+
+Operation.prototype.onNext() {
+  
+}
+
+var Filter = function(f) {
+  this.f = f;
+}
+
+Filter.prototype = Object.create(Operation.prototype);
+Filter.prototype.constructor = Filter;
+
+Filter.prototype.onNext(val) {
+  return this.f(val) ? this.next.onNext(val) : undefined;
+}
+  
+var Map = function(f) {
+  this.f = f;
+}
+
+Map.prototype.onNext(val) {
+  return this.next.onNext(this.f(val));
+}
+
+
+  
 function Filter(f, xform) {
   this.xform = xform;
   this.f = f;
