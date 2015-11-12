@@ -1,7 +1,3 @@
-var Promise = require("bluebird");
-var Rx = require("rx");
-
-
 var copySchema = function(schema, selectedNames, changedNames) {
   var columnNames = schema.columnNames;
   var columnTypes = schema.columnTypes;
@@ -123,7 +119,7 @@ Reducer.prototype = Object.create(Operation.prototype);
 Reducer.prototype.constructor = Reducer;
 
 Reducer.prototype.onNext = function(val) {
-  this.count++
+  this.count++;
   return this.accumulator.onNext(val);
 }
 
@@ -159,6 +155,8 @@ Accumulator.prototype.constructor = Accumulator;
 
 Accumulator.prototype.onNext = function(val) {
   this.result = this.acc(this.result, val);
+  console.log("val", val);
+  console.log("result", this.result);
   return this.subscriber.onNext(val);
 }
 
@@ -427,8 +425,9 @@ DataFrame.prototype.addOperation = function(constructor) {
   var newConstructor = constructor.bind.apply(constructor, arguments);
   if (this.groupedOperations.length) {
     this.groupedOperations[this.groupedOperations.length - 1][1].push(newConstructor);
+  } else {
+    this.operations.push(newConstructor);
   }
-  this.operations.push(newConstructor);
 }
 
 DataFrame.prototype.combine = function() {
