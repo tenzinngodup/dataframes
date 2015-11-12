@@ -29,7 +29,7 @@ var clone = function(original) {
       copy[key] = original[key];
     }
     return copy;
-  } else if (typeof original === "array") {
+  } else if (Array.isArray(original)) {
     copy = [];
     for (var i = 0; i < init.length; i++) {
       copy.push(original[i]);
@@ -39,24 +39,58 @@ var clone = function(original) {
   }
 }
 
-
-/* Credited to jlongster: https://github.com/jlongster/transducers.js/blob/master/transducers.js */
-function compose(funcs) {
-  return function(r) {
-    var value = r;
-    for(var i=funcs.length-1; i>=0; i--) {
-      value = funcs[i](value);
-    }
-    return value;
+var addOperation = function(subsequentChain, operation) {
+  return function() {
+    var op = new operation;
+    op.addChain(subsequentChain);
+    return op;
   }
 }
 
-var Operation = function() {
-  
+var addOperations = function(subsequentChain, operations) {
+  var chain = subsequentChain;
+  for (var i = operations.length - 1; i >= 0; i--) {
+    var operation = operations[i]
+    chain = addOperation(chain, operation);
+  }
+  return chain;
 }
 
-Operation.prototype.onNext() {
-  
+var Operation = function() {}
+
+Operation.prototype.onNext = function(val) {
+  return this.subscriber.onNext(val);
+}
+
+Operation.prototype.onCompleted = function() {
+  return this.subscriber.onCompleted();
+}
+
+Operation.prototype.onError = function(err) {
+  throw err;
+}
+
+Operation.prototype.addChain = function(subsequentChain) {
+  this.subscribe(subsequentChain());
+}
+
+Operation.prototype.subscribe = function(observer) {
+  this.subscriber = observer;
+}
+
+var DataFrameBuilder = function() {
+  this.rows = [];
+}
+DataFrameBuilder.prototype = Object.create(Operation.prototype);
+DataFrameBuilder.prototype.constructor = DataFrameBuilder;
+
+DataFrameBuilder.prototype.onNext = function(val) {
+  this.rows.push(val);
+  return true;
+}
+
+DataFrameBuilder.prototype.onCompleted = function() {
+  return new DataFrame(this.rows);
 }
 
 var Filter = function(f) {
@@ -66,262 +100,131 @@ var Filter = function(f) {
 Filter.prototype = Object.create(Operation.prototype);
 Filter.prototype.constructor = Filter;
 
-Filter.prototype.onNext(val) {
-  return this.f(val) ? this.next.onNext(val) : undefined;
+Filter.prototype.onNext = function(val) {
+  return this.f(val) ? this.subscriber.onNext(val) : true;
 }
-  
+
+
 var Map = function(f) {
   this.f = f;
 }
+Map.prototype = Object.create(Operation.prototype);
+Map.prototype.constructor = Map;
 
-Map.prototype.onNext(val) {
-  return this.next.onNext(this.f(val));
+Map.prototype.onNext = function(val) {
+  return this.subscriber.onNext(this.f(val));
 }
 
+var Reducer = function(accumulatorChain) {
+  this.accumulator = accumulatorChain();
+  this.count = 0;
+}
+Reducer.prototype = Object.create(Operation.prototype);
+Reducer.prototype.constructor = Reducer;
 
-  
-function Filter(f, xform) {
-  this.xform = xform;
-  this.f = f;
+Reducer.prototype.onNext = function(val) {
+  this.count++
+  return this.accumulator.onNext(val);
 }
 
-Filter.prototype['@@transducer/init'] = function(init) {
-  return this.xform['@@transducer/init'](init);
-};
+Reducer.prototype.onCompleted = function() {
+  var result = this.accumulator.onCompleted();
+  this.subscriber.onNext(result);
+  return this.subscriber.onCompleted();
+}
 
-Filter.prototype['@@transducer/result'] = function(res) {
-  return this.xform['@@transducer/result'](res);
-};
+var RowTransformer = function() {}
+RowTransformer.prototype = Object.create(Operation.prototype);
+RowTransformer.prototype.constructor = RowTransformer;
 
-Filter.prototype['@@transducer/step'] = function(res, input) {
-  if(this.f(input)) {
-    return this.xform['@@transducer/step'](res, input);
+RowTransformer.prototype.onNext = function(val) {
+  var row;
+  if (!this.hasOwnProperty("schema")) this.schema = Row.getSchema(val);
+  row = new Row(val, this.schema)
+  return this.subscriber.onNext(row);
+}
+
+RowTransformer.prototype.onCompleted = function() {
+  return this.subscriber.onCompleted();
+}
+
+var Accumulator = function(key, acc, setup, cleanup) {
+  this.key = key;
+  this.acc = acc;
+  this.result = (typeof(setup) !== "undefined") ? setup() : null;
+  if (cleanup) this.cleanup = cleanup;
+}
+Accumulator.prototype = Object.create(Operation.prototype);
+Accumulator.prototype.constructor = Accumulator;
+
+Accumulator.prototype.onNext = function(val) {
+  this.result = this.acc(this.result, val);
+  return this.subscriber.onNext(val);
+}
+
+Accumulator.prototype.onCompleted = function() {
+  var result = this.subscriber.onCompleted();
+  if (this.hasOwnProperty("cleanup")) {
+    this.result = this.cleanup(this.result);
   }
-  return res;
-};
-
-function filter(f) {
-  return function(xform) {
-    return new Filter(f, xform);
-  };
+  result[this.key] = this.result;
+  return result;
 }
 
-function Map(f, xform) {
-  this.xform = xform;
-  this.f = f;
+var AccumulatorEnd = function() {}
+AccumulatorEnd.prototype = Object.create(Operation.prototype);
+AccumulatorEnd.prototype.constructor = AccumulatorEnd;
+
+AccumulatorEnd.prototype.onNext = function(val) { return true; }
+
+AccumulatorEnd.prototype.onCompleted = function() {
+  return {}
 }
 
-Map.prototype['@@transducer/init'] = function() {
-  return this.xform['@@transducer/init']();
-};
-
-Map.prototype['@@transducer/result'] = function(v) {
-  return this.xform['@@transducer/result'](v);
-};
-
-Map.prototype['@@transducer/step'] = function(res, input) {
-  return this.xform['@@transducer/step'](res, this.f(input));
-};
-
-function map(f) {
-  return function(xform) {
-    return new Map(f, xform);
-  }
+GroupByOperation = function(keyFunction, operations) {
+  this.keyFunction = keyFunction;
+  this.groups = {};
+  var groupEnd = new GroupEndOperation();
+  var final = function() { return groupEnd; }
+  this.groupEnd = groupEnd;
+  this.groupedChain = addOperations(final, operations);
 }
 
-var DataFrameBuilder = function(xform) {
-  this._xform = xform;
-}
+GroupByOperation.prototype = Object.create(Operation.prototype);
+GroupByOperation.prototype.constructor = GroupByOperation;
 
-DataFrameBuilder.prototype['@@transducer/init'] = function(init) {
-  return this._xform["@@transducer/init"](init);
-};
-
-DataFrameBuilder.prototype['@@transducer/result'] = function(res) {
-  res = this._xform["@@transducer/result"](res);
-  return new DataFrame([res], {schema: res.schema, safe: true});
-};
-
-DataFrameBuilder.prototype['@@transducer/step'] = function(res, input) {
-  return this._xform["@@transducer/step"](res, input);
-};
-
-var GroupByTransformer = function(keyFunction, groupTransformer, xform) {
-  this._keyFunction = keyFunction;
-  this._groupTransformer = groupTransformer;
-  this._xform = xform;
-}
-
-GroupByTransformer.prototype['@@transducer/init'] = function(init) {
-  this._init = init;
-  return this._xform["@@transducer/init"]({});
-};
-
-GroupByTransformer.prototype['@@transducer/result'] = function(res) {
-  res[this._name] = this._singleXform["@@transducer/result"](res[this._name]);
-  return this._xform["@@transducer/result"](res);
-};
-
-GroupByTransformer.prototype['@@transducer/step'] = function(res, input) {
-  var key = this._keyFunction(input);
-  var groupRes;
-  if (res.hasOwnKey(key)) {
-    groupRes = res[key];
+GroupByOperation.prototype.onNext = function(val) {
+  var key = this.keyFunction(val);
+  var group;
+  if (this.groups.hasOwnProperty(key)) {
+    group = this.groups[key];
   } else {
-    groupRes = this._groupTransformer["@@transducer/init"](clone(this._init));
+    group = this.groupedChain();
+    this.groups[key] = group;
   }
-  res[key] = this._groupTransformer["@@transducer/step"](groupRes, input);
-  return this._xform["@@transducer/step"](res, input);
-};
-
-var SummarizerTransformer = function(summaryTransformer, xform) {
-  this._summaryTransformer = summaryTransformer;
-  this._xform = xform;
+  return group.onNext(val);
 }
 
-GroupByTransformer.prototype['@@transducer/init'] = function(init) {
-  this._init = init;
-  return this._xform["@@transducer/init"]({});
-};
-
-GroupByTransformer.prototype['@@transducer/result'] = function(res) {
-  res[this._name] = this._singleXform["@@transducer/result"](res[this._name]);
-  return this._xform["@@transducer/result"](res);
-};
-
-GroupByTransformer.prototype['@@transducer/step'] = function(res, input) {
-  var key = this._keyFunction(input);
-  var groupRes;
-  if (res.hasOwnKey(key)) {
-    groupRes = res[key];
-  } else {
-    groupRes = this._groupTransformer["@@transducer/init"](clone(this._init));
+GroupByOperation.prototype.onCompleted = function() {
+  var groupResults = {};
+  for (var key in this.groups) {
+    var group = this.groups[key];
+    group.onCompleted();
   }
-  res[key] = this._groupTransformer["@@transducer/step"](groupRes, input);
-  return this._xform["@@transducer/step"](res, input);
-};
-
-
-/*
-Initializes with an object.
-*/
-
-
-var ParallelTransformer = function(xform) {
-  this._xform = xform;
+  return this.subscriber.onCompleted();
 }
 
-ParallelTransformer.prototype['@@transducer/init'] = function(init) {
-  return this._xform["@@transducer/init"]({});
-};
-
-ParallelTransformer.prototype['@@transducer/result'] = function(res) {
-  return this._xform["@@transducer/result"](res);
-};
-
-ParallelTransformer.prototype['@@transducer/step'] = function(res, input) {
-  return this._xform["@@transducer/step"](res, input);
-};
-
-/*
-SingleTransformer: Saves the results of a transformation under a particular key.
-*/
-
-var SingleTransformer = function(name, singleXform, xform) {
-  this._name = name;
-  this._singleXform = singleXform;
-  this._xform = xform;
+GroupByOperation.prototype.subscribe = function(observer) {
+  this.subscriber = observer;
+  this.groupEnd.subscribe(observer);
 }
 
-SingleTransformer.prototype['@@transducer/init'] = function(init) {
-  init[this._name] = this._singleXform["@@transducer/init"](init);
-  return this._xform["@@transducer/init"](init);
-};
 
-SingleTransformer.prototype['@@transducer/result'] = function(res) {
-  res[this._name] = this._singleXform["@@transducer/result"](res[this._name]);
-  return this._xform["@@transducer/result"](res);
-};
+GroupEndOperation = function() {}
+GroupEndOperation.prototype = Object.create(Operation.prototype);
+GroupEndOperation.prototype.constructor = GroupEndOperation;
 
-SingleTransformer.prototype['@@transducer/step'] = function(res, input) {
-  res[this._name] = this._singleXform["@@transducer/step"](res[this._name], input);
-  return this._xform["@@transducer/step"](res, input);
-};
-
-/*
-RowReducer: Turns an object into a row.
-*/
-
-var RowReducer = function(xform) {
-  this._xform = xform;
-}
-
-RowReducer.prototype['@@transducer/init'] = function(init) {
-  return this._xform["@@transducer/init"](init);
-};
-
-RowReducer.prototype['@@transducer/result'] = function(res) {
-  var row = new Row(res, Row.getSchema(res));
-  return this._xform["@@transducer/result"](row);
-};
-
-RowReducer.prototype['@@transducer/step'] = function(res, input) {
-  return this._xform["@@transducer/step"](res, input);
-};
-
-
-var NonTransformer = function(xform) {
-  this._xform = xform;
-}
-
-NonTransformer = function() {};
-
-NonTransformer.prototype['@@transducer/init'] = function(init) {
-  return init;
-};
-
-NonTransformer.prototype['@@transducer/result'] = function(res) {
-  return res;
-};
-
-NonTransformer.prototype['@@transducer/step'] = function(res, input) {
-  return res;
-};
-
-var GenericReducer = function(accumulator, xform) {
-  this._accumulator = accumulator;
-  this._xform = xform;
-}
-
-GenericReducer.prototype['@@transducer/init'] = function(init) {
-  return null;
-};
-
-GenericReducer.prototype['@@transducer/result'] = function(res) {
-  return res;
-};
-
-GenericReducer.prototype['@@transducer/step'] = function(res, input) {
-  return this._accumulator(res, input);
-};
-
-var parallelTransform = function(xform) {
-  return new ParallelTransformer(xform);
-}
-
-var singleTransform = function(name, singleXform) {
-  return function(xform) {
-    return new SingleTransformer(name, singleXform, xform);    
-  }
-}
-
-var rowReduce = function(xform) {
-  return new RowReducer(xform);
-}
-
-var dataFrameBuild = function(xform) {
-  return new DataFrameBuilder(xform);
-}
+GroupEndOperation.prototype.onCompleted = function() { return }
 
 var swap = function(obj) {
   // swap keys and values
@@ -350,21 +253,23 @@ var DataFrame = function(data, options) {
         rowArray.push(new Row(data[i], schema));
       }
     }
+  } else {
+    this.schema = {"columnNames": [], "columnTypes": []};
   }
   this.rowArray = rowArray;
-  this.transformer = new NonTransformer();
-  this.transducers = [];
+  this.operations = [];
+  this.groupedOperations = [];
 }
 
 DataFrame.prototype.filter = function(func) {
-  this.transducers.push(filter(func));
+  this.addOperation(Filter, func);
   return this;
 }
 
 DataFrame.prototype.mutate = function(newColumnName, func) {
   var newSchema = undefined;
   var newType = undefined;
-  var transducer = map(function(row) {
+  this.map(function(row) {
     var value = func(row);
     var newRow = Object.create(row);
     if (typeof newSchema === "undefined") {
@@ -377,7 +282,6 @@ DataFrame.prototype.mutate = function(newColumnName, func) {
     newRow[newColumnName] = (typeof value === newType) ? value : null;
     return newRow;
   });
-  this.transducers.push(transducer);
   return this;
 }
 
@@ -396,7 +300,7 @@ DataFrame.prototype.select = function() {
     }
   }
   var newSchema = undefined;
-  var transducer = map(function(row) {
+  this.map(function(row) {
     if (typeof newSchema === "undefined") {
       newSchema = copySchema(row.schema, newNames, namesToChange);
     }
@@ -404,7 +308,6 @@ DataFrame.prototype.select = function() {
     var newRow = new Row(row, newSchema, changedNames);
     return newRow;
   });
-  this.transducers.push(transducer);
   return this;
 }
 
@@ -413,7 +316,7 @@ DataFrame.prototype.rename = function(namesToChange) {
     return this;
   }
   var newSchema = undefined;
-  var transducer = map(function(row) {
+  this.map(function(row) {
     if (typeof newSchema === "undefined") {
       newSchema = copySchema(row.schema, undefined, namesToChange);
     }
@@ -421,7 +324,6 @@ DataFrame.prototype.rename = function(namesToChange) {
     var newRow = new Row(row, newSchema, changedNames);
     return newRow;
   });
-  this.transducers.push(transducer);
   return this;
 }
 
@@ -437,7 +339,7 @@ DataFrame.prototype.distinct = function() {
     }
   }
   var filteredDistinctColumns = undefined;
-  var transducer = filter(function(row) {
+  this.filter(function(row) {
     if (filteredDistinctColumns == undefined) {
       filteredDistinctColumns = [];
       for (var i = 0; i < distinctColumns.length; i++) {
@@ -458,7 +360,6 @@ DataFrame.prototype.distinct = function() {
       return true;
     }
   });
-  this.transducers.push(transducer);
   return this;
 }
 
@@ -467,37 +368,84 @@ DataFrame.prototype.summarize = function(summaries) {
     return this;
   }
   var summaryColumns = Object.keys(summaries);
-  this.transducers.push(parallelTransform);
+  var accumulatorChain = function() { return new AccumulatorEnd(); }
   for (var i = 0; i < summaryColumns.length; i++) {
     var name = summaryColumns[i];
     var obj = summaries[name];
-    var columnTransformer;
-    if (!obj["@@transducer/step"]) {
-      // this is not a transformer, so make one
-      // assuming for now that it's an accumulator function
-      columnTransformer = new GenericReducer(obj);
+    var constructor;
+    if (obj.prototype instanceof Operation) {
+      constructor = obj;
+      arguments = [obj, name];
     } else {
-      columnTransformer = obj;
+      constructor = Accumulator;
+      arguments = [constructor, name];
+      if (Array.isArray(obj)) {arguments.concat(obj);} else {arguments.push(obj);}
     }
-    this.transducers.push(singleTransform(name, columnTransformer));
+    var newConstructor = constructor.bind.apply(constructor, arguments);
+    accumulatorChain = addOperation(accumulatorChain, newConstructor);
   }
-  this.transducers.push(rowReduce);
+  this.addOperation(Reducer, accumulatorChain);
+  this.addOperation(RowTransformer);
+  this.combine();
   return this;
 }
 
 DataFrame.prototype.summarise = DataFrame.prototype.summarize;
 
+DataFrame.prototype.groupBy = function(key) {
+  var keyFunc;
+  if (typeof key === "function") {
+    keyFunc = key;
+  } else if (typeof key === "string") {
+    keyFunc = function(row) {return row[key];}
+  } else if (typeof key === "number") {
+    if (key % 0 !== 0 || (key > this.schema.columnNames.length)) {
+      console.log("Error: bad key");
+      return;
+    } else {
+      keyFunc = function(row) { return row.getByIndex(key) }
+    }
+  } else if (Array.isArray(key)) {
+    keyfunc = function(row) {
+      keyString = "";
+      for (var i = 0; i < key.length; i++) {
+        keyString += row[key];
+      }
+      return keyString;
+    }
+  }
+  this.groupedOperations.push([keyFunc, []]);
+  return this;
+}
+
+DataFrame.prototype.map = function(f) {
+  this.addOperation(Map, f);
+}
+
+DataFrame.prototype.addOperation = function(constructor) {
+  if (!constructor) return;
+  var newConstructor = constructor.bind.apply(constructor, arguments);
+  if (this.groupedOperations.length) {
+    this.groupedOperations[this.groupedOperations.length - 1][1].push(newConstructor);
+  }
+  this.operations.push(newConstructor);
+}
+
+DataFrame.prototype.combine = function() {
+  groupByArray = this.groupedOperations.pop();
+  this.addOperation(GroupByOperation, groupByArray[0], groupByArray[1]);
+}
+
 DataFrame.prototype.collect = function() {
-  this.transducers.push(dataFrameBuild);
-  var transducer = compose(this.transducers);
-  var transformer = transducer(this.transformer);
-  var result = transformer["@@transducer/init"]();
-  var row;
+  var final = function() { return new DataFrameBuilder() }
+  var chain = addOperations(final, this.operations)
+  var operation = chain();
   for (var i = 0; i < this.rowArray.length; i++) {
     row = this.rowArray[i];
-    result = transformer["@@transducer/step"](result, row);
+    var result = operation.onNext(row);
+    if (!result) break;
   }
-  return transformer["@@transducer/result"](result);
+  return operation.onCompleted();
 }
 
 DataFrame.prototype["@@iterator"] = function() {
@@ -636,7 +584,9 @@ var Row = function(rowData, schema, changedNames) {
 }
 
 Row.getSchema = function(rowData, columnNames) {
-  var columnNames = columnNames || Object.keys(rowData);  
+  var columnNames = columnNames || Object.keys(rowData);
+  var index = columnNames.indexOf("schema");
+  if (index > -1) { columnNames.splice(index, 1) }
   var columnTypes = this.getColumnTypes(rowData, columnNames);
   return {columnNames: columnNames, columnTypes: columnTypes};
 }

@@ -44,7 +44,7 @@ df = df
   .mutate("years_in_office", function(row) { return row.last_year - row.inauguration_year; })
   .select("first_name", "last_name", "years_in_office", {"years_in_office": "years"})
   .rename({"first_name": "first", "last_name": "last"})
-  .distinct("first")
+  .groupBy("years")
   .summarize(
     {
       "total_years": 
@@ -57,4 +57,4 @@ df = df
           return "" + result + row["first"] + " ";
         }
   });
-df.collect().show();
+df = df.collect().show();
