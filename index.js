@@ -135,7 +135,7 @@ RowTransformer.prototype.constructor = RowTransformer;
 
 RowTransformer.prototype.onNext = function(val) {
   var row;
-  if (!this.hasOwnProperty("schema")) this.schema = Row.getSchema(val);
+  if (!this.hasOwnProperty("schema")) this.schema = Schema(val);
   row = new Row(val, this.schema)
   return this.subscriber.onNext(row);
 }
@@ -234,29 +234,62 @@ var swap = function(obj) {
   return swapped;
 }
 
+var Schema = function(rawRowObject, columnNames) {
+  this.columnNames = columnNames || Object.keys(rawRowObject);
+  this.setColumnTypes(rawRowObject);
+}
+
+Schema.prototype.setColumnTypes = function(rawRowObject) {
+  var columnTypes = [];
+  var columnNames = this.columnNames;
+  var columnIndices = {};
+  var name, value, valueType;
+  for (var i = 0; i < columnNames.length; i++) {
+    name = columnNames[i];
+    value = rawRowObject[name];
+    valueType = typeof value;
+    columnTypes.push(valueType);
+    columnIndices[name] = i;
+  }
+  this.columnTypes = columnTypes;
+  this.columnIndices = columnIndices;
+}
+
 var DataFrame = function(data, options) {
   options = options || {};
   var rowArray = [];
   if (data.length) {
-    var schema = options.schema || Row.getSchema(data[0]);
-    if (!schema.hasOwnProperty("columnTypes")) {
-      schema.columnTypes = this.getColumnTypes(data[0], schema.columnNames);
-    }
+    var schema = options.schema || Schema(data[0]);
     this.schema = schema;
+    this.setRowObject();
     this.setColumns();
     if (options.safe) {
       rowArray = data;
     } else {
       for (var i = 0; i < data.length; i++) {
-        rowArray.push(new Row(data[i], schema));
+        rowArray.push(new Row(data[i]));
       }
     }
   } else {
-    this.schema = {"columnNames": [], "columnTypes": []};
+    this.schema = new Schema({});
   }
   this.rowArray = rowArray;
   this.operations = [];
   this.groupedOperations = [];
+}
+
+DataFrame.prototype.setRowObject = function(schema) {
+  var RowObject = function() {}
+  RowObject.prototype = Object.create(Row);
+  RowObject.prototype.constructor = this.RowObject;
+  RowObject.prototype.schema = schema;
+  var columnNames = schema.columnNames;
+  var columnIndices = schema.columnIndices;
+  for (var i = 0; i < columnNames.length; i++) {
+    var name = columnNames[i];
+    Object.defineProperty(RowObject, name, { get: function() { return this.data[i]; }});
+  }
+  this.RowObject = RowObject;
 }
 
 DataFrame.prototype.filter = function(func) {
@@ -271,7 +304,7 @@ DataFrame.prototype.mutate = function(newColumnName, func) {
     var value = func(row);
     var newRow = Object.create(row);
     if (typeof newSchema === "undefined") {
-      newSchema = copySchema(row.schema);
+      newSchema = Schema(row.schema);
       newSchema.columnNames.push(newColumnName);
       newType = typeof value;
       newSchema.columnTypes.push(newType);
@@ -300,7 +333,7 @@ DataFrame.prototype.select = function() {
   var newSchema = undefined;
   this.map(function(row) {
     if (typeof newSchema === "undefined") {
-      newSchema = copySchema(row.schema, newNames, namesToChange);
+      newSchema = Schema(row.schema, newNames, namesToChange);
     }
     var changedNames = swap(namesToChange);
     var newRow = new Row(row, newSchema, changedNames);
@@ -316,7 +349,7 @@ DataFrame.prototype.rename = function(namesToChange) {
   var newSchema = undefined;
   this.map(function(row) {
     if (typeof newSchema === "undefined") {
-      newSchema = copySchema(row.schema, undefined, namesToChange);
+      newSchema = Schema(row.schema, undefined, namesToChange);
     }
     var changedNames = swap(namesToChange);
     var newRow = new Row(row, newSchema, changedNames);
@@ -580,26 +613,6 @@ var Row = function(rowData, schema, changedNames) {
       }
     }
   }
-}
-
-Row.getSchema = function(rowData, columnNames) {
-  var columnNames = columnNames || Object.keys(rowData);
-  var index = columnNames.indexOf("schema");
-  if (index > -1) { columnNames.splice(index, 1) }
-  var columnTypes = this.getColumnTypes(rowData, columnNames);
-  return {columnNames: columnNames, columnTypes: columnTypes};
-}
-
-Row.getColumnTypes = function(rowData, columnNames) {
-  var columnTypes = [];
-  var name, value, valueType;
-  for (var i = 0; i < columnNames.length; i++) {
-    name = columnNames[i];
-    value = rowData[name];
-    valueType = typeof value;
-    columnTypes.push(valueType);
-  }
-  return columnTypes;
 }
 
 Row.prototype.get = function(colIdentifier) {
