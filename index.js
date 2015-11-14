@@ -1,21 +1,19 @@
-var copySchema = function(schema, selectedNames, changedNames) {
-  var columnNames = schema.columnNames;
-  var columnTypes = schema.columnTypes;
-  var newColumnNames = [];
-  var newColumnTypes = [];
-  var changedNameKeys = (typeof changedNames === "object") ? Object.keys(changedNames) : undefined;
-  for (var i = 0; i < columnNames.length; i++) {
-    var columnName = columnNames[i];
-    if (changedNames && changedNameKeys.indexOf(columnName) > -1) {
-      newColumnNames.push(changedNames[columnName]);
-      newColumnTypes.push(columnTypes[i]);
-    } else if (!selectedNames || selectedNames.indexOf(columnName) > -1) {
-      newColumnNames.push(columnName);
-      newColumnTypes.push(columnTypes[i]);      
-    } 
-  }
-  return {columnNames: newColumnNames, columnTypes: newColumnTypes};
-}
+var Schema = require("./schema");
+var Operations = require("./operations");
+
+var Operation = Operations.Operation;
+var DataFrameBuilder = Operations.DataFrameBuilder;
+var Reducer = Operations.Reducer;
+var RowTransformer = Operations.RowTransformer;
+var Accumulator = Operations.Accumulator;
+var AccumulatorEnd = Operations.AccumulatorEnd;
+var Distinct = Operations.Distinct;
+var Mutate = Operations.Mutate;
+var Filter = Operations.Filter;
+var GroupBy = Operations.GroupBy;
+var GroupEnd = Operations.GroupEnd;
+var addOperation = Operations.addOperation;
+var addOperations = Operations.addOperations;
 
 var clone = function(original) {
   // hackish but close enough for now
@@ -35,261 +33,33 @@ var clone = function(original) {
   }
 }
 
-var addOperation = function(subsequentChain, operation) {
-  return function() {
-    var op = new operation;
-    op.addChain(subsequentChain);
-    return op;
-  }
-}
-
-var addOperations = function(subsequentChain, operations) {
-  var chain = subsequentChain;
-  for (var i = operations.length - 1; i >= 0; i--) {
-    var operation = operations[i]
-    chain = addOperation(chain, operation);
-  }
-  return chain;
-}
-
-var Operation = function() {}
-
-Operation.prototype.onNext = function(val) {
-  return this.subscriber.onNext(val);
-}
-
-Operation.prototype.onCompleted = function() {
-  return this.subscriber.onCompleted();
-}
-
-Operation.prototype.onError = function(err) {
-  throw err;
-}
-
-Operation.prototype.addChain = function(subsequentChain) {
-  this.subscribe(subsequentChain());
-}
-
-Operation.prototype.subscribe = function(observer) {
-  this.subscriber = observer;
-}
-
-var DataFrameBuilder = function() {
-  this.rows = [];
-}
-DataFrameBuilder.prototype = Object.create(Operation.prototype);
-DataFrameBuilder.prototype.constructor = DataFrameBuilder;
-
-DataFrameBuilder.prototype.onNext = function(val) {
-  this.rows.push(val);
-  return true;
-}
-
-DataFrameBuilder.prototype.onCompleted = function() {
-  return new DataFrame(this.rows);
-}
-
-var Filter = function(f) {
-  this.f = f;
-}
-
-Filter.prototype = Object.create(Operation.prototype);
-Filter.prototype.constructor = Filter;
-
-Filter.prototype.onNext = function(val) {
-  return this.f(val) ? this.subscriber.onNext(val) : true;
-}
-
-
-var Map = function(f) {
-  this.f = f;
-}
-Map.prototype = Object.create(Operation.prototype);
-Map.prototype.constructor = Map;
-
-Map.prototype.onNext = function(val) {
-  return this.subscriber.onNext(this.f(val));
-}
-
-var Reducer = function(accumulatorChain) {
-  this.accumulator = accumulatorChain();
-  this.count = 0;
-}
-Reducer.prototype = Object.create(Operation.prototype);
-Reducer.prototype.constructor = Reducer;
-
-Reducer.prototype.onNext = function(val) {
-  this.count++;
-  return this.accumulator.onNext(val);
-}
-
-Reducer.prototype.onCompleted = function() {
-  var result = this.accumulator.onCompleted();
-  this.subscriber.onNext(result);
-  return this.subscriber.onCompleted();
-}
-
-var RowTransformer = function() {}
-RowTransformer.prototype = Object.create(Operation.prototype);
-RowTransformer.prototype.constructor = RowTransformer;
-
-RowTransformer.prototype.onNext = function(val) {
-  var row;
-  if (!this.hasOwnProperty("schema")) this.schema = Schema(val);
-  row = new Row(val, this.schema)
-  return this.subscriber.onNext(row);
-}
-
-RowTransformer.prototype.onCompleted = function() {
-  return this.subscriber.onCompleted();
-}
-
-var Accumulator = function(key, acc, setup, cleanup) {
-  this.key = key;
-  this.acc = acc;
-  this.result = (typeof(setup) !== "undefined") ? setup() : null;
-  if (cleanup) this.cleanup = cleanup;
-}
-Accumulator.prototype = Object.create(Operation.prototype);
-Accumulator.prototype.constructor = Accumulator;
-
-Accumulator.prototype.onNext = function(val) {
-  this.result = this.acc(this.result, val);
-  console.log("val", val);
-  console.log("result", this.result);
-  return this.subscriber.onNext(val);
-}
-
-Accumulator.prototype.onCompleted = function() {
-  var result = this.subscriber.onCompleted();
-  if (this.hasOwnProperty("cleanup")) {
-    this.result = this.cleanup(this.result);
-  }
-  result[this.key] = this.result;
-  return result;
-}
-
-var AccumulatorEnd = function() {}
-AccumulatorEnd.prototype = Object.create(Operation.prototype);
-AccumulatorEnd.prototype.constructor = AccumulatorEnd;
-
-AccumulatorEnd.prototype.onNext = function(val) { return true; }
-
-AccumulatorEnd.prototype.onCompleted = function() {
-  return {}
-}
-
-GroupByOperation = function(keyFunction, operations) {
-  this.keyFunction = keyFunction;
-  this.groups = {};
-  var groupEnd = new GroupEndOperation();
-  var final = function() { return groupEnd; }
-  this.groupEnd = groupEnd;
-  this.groupedChain = addOperations(final, operations);
-}
-
-GroupByOperation.prototype = Object.create(Operation.prototype);
-GroupByOperation.prototype.constructor = GroupByOperation;
-
-GroupByOperation.prototype.onNext = function(val) {
-  var key = this.keyFunction(val);
-  var group;
-  if (this.groups.hasOwnProperty(key)) {
-    group = this.groups[key];
-  } else {
-    group = this.groupedChain();
-    this.groups[key] = group;
-  }
-  return group.onNext(val);
-}
-
-GroupByOperation.prototype.onCompleted = function() {
-  var groupResults = {};
-  for (var key in this.groups) {
-    var group = this.groups[key];
-    group.onCompleted();
-  }
-  return this.subscriber.onCompleted();
-}
-
-GroupByOperation.prototype.subscribe = function(observer) {
-  this.subscriber = observer;
-  this.groupEnd.subscribe(observer);
-}
-
-
-GroupEndOperation = function() {}
-GroupEndOperation.prototype = Object.create(Operation.prototype);
-GroupEndOperation.prototype.constructor = GroupEndOperation;
-
-GroupEndOperation.prototype.onCompleted = function() { return }
-
-var swap = function(obj) {
-  // swap keys and values
-
-  var swapped = {};
-  for (var key in obj) {
-    swapped[obj[key]] = key;
-  }
-  return swapped;
-}
-
-var Schema = function(rawRowObject, columnNames) {
-  this.columnNames = columnNames || Object.keys(rawRowObject);
-  this.setColumnTypes(rawRowObject);
-}
-
-Schema.prototype.setColumnTypes = function(rawRowObject) {
-  var columnTypes = [];
-  var columnNames = this.columnNames;
-  var columnIndices = {};
-  var name, value, valueType;
-  for (var i = 0; i < columnNames.length; i++) {
-    name = columnNames[i];
-    value = rawRowObject[name];
-    valueType = typeof value;
-    columnTypes.push(valueType);
-    columnIndices[name] = i;
-  }
-  this.columnTypes = columnTypes;
-  this.columnIndices = columnIndices;
-}
-
-var DataFrame = function(data, options) {
-  options = options || {};
-  var rowArray = [];
+var DataFrame = function(data, schema) {
+  var dataArray = [];
   if (data.length) {
-    var schema = options.schema || Schema(data[0]);
-    this.schema = schema;
-    this.setRowObject();
-    this.setColumns();
-    if (options.safe) {
-      rowArray = data;
+    if (Array.isArray(data[0])) {
+      this.dataArray = data;
+      this.schema = schema;
     } else {
-      for (var i = 0; i < data.length; i++) {
-        rowArray.push(new Row(data[i]));
+      this.schema = schema || new Schema(this, data[0]);
+      var columnNames = this.schema.getColumnNames();
+      var rowObject, rowArray, name;
+      for (var rowIndex = 0; rowIndex < data.length; rowIndex++) {
+        rowObject = data[rowIndex];     
+        rowArray = [];
+        for (var colIndex = 0; colIndex < columnNames.length; colIndex++) {
+          name = columnNames[colIndex];
+          rowArray.push(rowObject[name]);
+        }
+        dataArray.push(rowArray);
+        this.dataArray = dataArray;
       }
     }
   } else {
-    this.schema = new Schema({});
+    this.schema = new Schema(this, {});
   }
-  this.rowArray = rowArray;
+  this.newSchema = this.schema;
   this.operations = [];
   this.groupedOperations = [];
-}
-
-DataFrame.prototype.setRowObject = function(schema) {
-  var RowObject = function() {}
-  RowObject.prototype = Object.create(Row);
-  RowObject.prototype.constructor = this.RowObject;
-  RowObject.prototype.schema = schema;
-  var columnNames = schema.columnNames;
-  var columnIndices = schema.columnIndices;
-  for (var i = 0; i < columnNames.length; i++) {
-    var name = columnNames[i];
-    Object.defineProperty(RowObject, name, { get: function() { return this.data[i]; }});
-  }
-  this.RowObject = RowObject;
 }
 
 DataFrame.prototype.filter = function(func) {
@@ -297,22 +67,15 @@ DataFrame.prototype.filter = function(func) {
   return this;
 }
 
+DataFrame.prototype._new = function(rows, schema) {
+  return new DataFrame(rows, schema);
+}
+
 DataFrame.prototype.mutate = function(newColumnName, func) {
-  var newSchema = undefined;
-  var newType = undefined;
-  this.map(function(row) {
-    var value = func(row);
-    var newRow = Object.create(row);
-    if (typeof newSchema === "undefined") {
-      newSchema = Schema(row.schema);
-      newSchema.columnNames.push(newColumnName);
-      newType = typeof value;
-      newSchema.columnTypes.push(newType);
-    }
-    newRow.schema = newSchema;
-    newRow[newColumnName] = (typeof value === newType) ? value : null;
-    return newRow;
-  });
+  this.addOperation(Mutate, func);
+  var newWidth = this.newSchema.width;
+  var newColumn = new Schema.Column(this, newColumnName, newWidth, "number");
+  this.newSchema = new Schema(this, this.newSchema, null, null, [newColumn]);
   return this;
 }
 
@@ -330,15 +93,8 @@ DataFrame.prototype.select = function() {
       }
     }
   }
-  var newSchema = undefined;
-  this.map(function(row) {
-    if (typeof newSchema === "undefined") {
-      newSchema = Schema(row.schema, newNames, namesToChange);
-    }
-    var changedNames = swap(namesToChange);
-    var newRow = new Row(row, newSchema, changedNames);
-    return newRow;
-  });
+  var newSchema = new Schema(this, this.newSchema, newNames, namesToChange);
+  this.newSchema = newSchema;
   return this;
 }
 
@@ -346,51 +102,36 @@ DataFrame.prototype.rename = function(namesToChange) {
   if (typeof namesToChange !== "object") {
     return this;
   }
-  var newSchema = undefined;
-  this.map(function(row) {
-    if (typeof newSchema === "undefined") {
-      newSchema = Schema(row.schema, undefined, namesToChange);
-    }
-    var changedNames = swap(namesToChange);
-    var newRow = new Row(row, newSchema, changedNames);
-    return newRow;
-  });
+  var newSchema = new Schema(this, this.newSchema, null, namesToChange);
+  this.newSchema = newSchema;
   return this;
 }
 
 
 DataFrame.prototype.distinct = function() {
   var distinctObjects = Object.create(null);
-  var distinctColumns = arguments.length > 0 ? [] : undefined;
-  for (var i = 0; i < arguments.length; i++) {
-    var arg = arguments[i];
-    var argType = typeof arg;
-    if (argType === "string") {
-      distinctColumns.push(arg);      
-    }
-  }
-  var filteredDistinctColumns = undefined;
-  this.filter(function(row) {
-    if (filteredDistinctColumns == undefined) {
-      filteredDistinctColumns = [];
-      for (var i = 0; i < distinctColumns.length; i++) {
-        var distinctColumnName = distinctColumns[i];
-        if (row.schema.columnNames.indexOf(distinctColumnName) > -1) {
-          filteredDistinctColumns.push(distinctColumnName);
+  var distinctColumns = [];
+  var newSchema = this.newSchema;
+  var keyFunction;
+  if (arguments.length === 1 && typeof arguments[0] === "function") {
+    keyFunction = arguments[0];
+  } else {
+    if (arguments.length === 0) {
+      var list = newSchema.list;
+      for (var i = 0; i < list.length; i++) {
+        distinctColumns.push(newSchema.list[i].index);
+      }
+    } else {
+      for (var i = 0; i < arguments.length; i++) {
+        var arg = arguments[i];
+        var argType = typeof arg;
+        if (argType === "string" && newSchema.hasOwnKey(arg)) {
+          distinctColumns.push(newSchema[arg].index);      
         }
       }
     }
-    if (filteredDistinctColumns.length == 0) {
-      return true;
-    }
-    var uniqueString = row.toUniqueString(filteredDistinctColumns);
-    if (distinctObjects[uniqueString] !== undefined) {
-      return false;
-    } else {
-      distinctObjects[uniqueString] = true;
-      return true;
-    }
-  });
+    this.addOperation(DistinctColumns);
+  }
   return this;
 }
 
@@ -398,24 +139,28 @@ DataFrame.prototype.summarize = function(summaries) {
   if (typeof(summaries) !== "object") {
     return this;
   }
-  var summaryColumns = Object.keys(summaries);
+  var summaryColumnNames = Object.keys(summaries);
   var accumulatorChain = function() { return new AccumulatorEnd(); }
-  for (var i = 0; i < summaryColumns.length; i++) {
-    var name = summaryColumns[i];
+  var summaryColumns = [];
+  for (var i = 0; i < summaryColumnNames.length; i++) {
+    var name = summaryColumnNames[i];
+    summaryColumns.push(new Schema.Column(this, name, "number", i));
     var obj = summaries[name];
     var constructor;
     if (obj.prototype instanceof Operation) {
       constructor = obj;
-      arguments = [obj, name];
+      arguments = [obj, this.newSchema, name];
     } else {
       constructor = Accumulator;
-      arguments = [constructor, name];
+      arguments = [constructor, this.newSchema, name];
       if (Array.isArray(obj)) {arguments.concat(obj);} else {arguments.push(obj);}
     }
     var newConstructor = constructor.bind.apply(constructor, arguments);
     accumulatorChain = addOperation(accumulatorChain, newConstructor);
   }
   this.addOperation(Reducer, accumulatorChain);
+  var newSchema = new Schema(this, null, null, null, summaryColumns);
+  this.newSchema = newSchema;
   this.addOperation(RowTransformer);
   this.combine();
   return this;
@@ -445,35 +190,41 @@ DataFrame.prototype.groupBy = function(key) {
       return keyString;
     }
   }
-  this.groupedOperations.push([keyFunc, []]);
+  this.groupedOperations.unshift([this.newSchema, keyFunc, []]);
   return this;
 }
 
-DataFrame.prototype.map = function(f) {
-  this.addOperation(Map, f);
-}
-
 DataFrame.prototype.addOperation = function(constructor) {
-  if (!constructor) return;
-  var newConstructor = constructor.bind.apply(constructor, arguments);
+  var argLength = arguments.length;
+  if (argLength === 0) return;
+  var args = [constructor, this.newSchema];
+  for (var i = 1; i < argLength; i++) {
+    args.push(arguments[i]);
+  }
+  var newConstructor = constructor.bind.apply(constructor, args);
   if (this.groupedOperations.length) {
-    this.groupedOperations[this.groupedOperations.length - 1][1].push(newConstructor);
+    this.groupedOperations[0][2].push(newConstructor);
   } else {
     this.operations.push(newConstructor);
   }
 }
 
 DataFrame.prototype.combine = function() {
-  groupByArray = this.groupedOperations.pop();
-  this.addOperation(GroupByOperation, groupByArray[0], groupByArray[1]);
+  var groupByArray = this.groupedOperations.shift();
+  var schema = groupByArray[0]
+  var keyFunction = groupByArray[1];
+  var groupedOperations = groupByArray[2];
+  var newConstructor = constructor.bind.apply(GroupBy, [GroupBy, schema, keyFunction, groupedOperations]);
+  this.operations.push(newConstructor);
 }
 
 DataFrame.prototype.collect = function() {
-  var final = function() { return new DataFrameBuilder() }
+  var newSchema = this.newSchema;
+  var final = function() { return new DataFrameBuilder(newSchema); }
   var chain = addOperations(final, this.operations)
   var operation = chain();
-  for (var i = 0; i < this.rowArray.length; i++) {
-    row = this.rowArray[i];
+  for (var i = 0; i < this.dataArray.length; i++) {
+    row = this.dataArray[i];
     var result = operation.onNext(row);
     if (!result) break;
   }
@@ -500,163 +251,27 @@ DataFrame.prototype.setColumns = function() {
 }
 
 DataFrame.prototype.row = function(rowIndex) {
-  return this.rowArray[rowIndex];
+  return this.dataArray[rowIndex];
 }
 
 DataFrame.prototype.cell = function(rowIndex, colIndex) {
-  var row = this.rowArray[rowIndex];
+  var row = this.dataArray[rowIndex];
   return typeof row !== "undefined" ? row.get(colIndex) : undefined;
 }
 
 DataFrame.prototype.slice = function(startIndex, endIndex) {
-  return new DataFrame(this.rowArray.slice(startIndex, endIndex), this.schema);
+  return new DataFrame(this.dataArray.slice(startIndex, endIndex), this.schema);
 }
 
 DataFrame.prototype.show = function() {
-  var columnNames = this.schema.columnNames;
-  console.log(columnNames.join(" "));
-  for (var rowIndex = 0; rowIndex < this.rowArray.length; rowIndex++) {
-    console.log(this.rowArray[rowIndex].toString());
+  console.log(this.schema.toString());
+  for (var rowIndex = 0; rowIndex < this.dataArray.length; rowIndex++) {
+    console.log(this.dataArray[rowIndex]);
   }
 }
 
-function Column(df, name, type, index) {
-  this.df = df;
-  this.name = name;
-  this.type = type;
-  this.index = index;
-}
-
-Column.prototype.get = function(rowIndex) {
-  var row = this.df.row(rowIndex)
-  return row[this.name];
-}
-
-Column.prototype.toArray = function() {
-  var columnArray = [];
-  var columnIterator = this["@@iterator"]();
-  var next = columnIterator.next();
-  while (!next.done) {
-    columnArray.push(next.value);
-    next = columnIterator.next();
-  }
-  return columnArray;
-}
-
-Column.prototype["@@iterator"] = function() {
-  return new SingleColumnIterator(this);
-}
-
-var RowIterator = function(df) {
-  this.df = df;
-  this.index = 0;
-}
-
-RowIterator.prototype.next = function() {
-  var rowArray = this.df.rowArray;
-  if (this.index < rowArray.length) {
-    var result = {done: false, value: rowArray[this.index]};
-    this.index++;
-    return result;
-  } else {
-    return {done: true}
-  }
-}
-
-RowIterator.prototype["@@iterator"] = function() {
-  return this;
-}
-
-var SingleColumnIterator = function(column) {
-  var df = column.df;
-  this.columnName = column.name;
-  this.rowIterator = df["@@iterator"]();
-}
-
-SingleColumnIterator.prototype.next = function() {
-  var nextRowValue = this.rowIterator.next();
-  if (nextRowValue.done) {
-    return {done: true};
-  } else {
-    var row = nextRowValue.value;
-    return {done: false, value: row[this.columnName]}
-  }
-}
-
-var Row = function(rowData, schema, changedNames) {
-  this.schema = schema;
-  var columnNames = schema.columnNames;
-  var columnTypes = schema.columnTypes;
-  var name, type, value;
-  if (changedNames) {
-    var changed;
-    for (var i = 0; i < columnNames.length; i++) {
-      name = columnNames[i];
-      type = columnTypes[i];
-      changed = changedNames[name];
-      value = changed ? rowData[changed] : rowData[name];
-      if (typeof value === type) {
-        this[name] = value;
-      } else {
-        this[name] = null;
-      }
-    }
-  } else {
-    for (var i = 0; i < columnNames.length; i++) {
-      var name = columnNames[i];
-      var type = columnTypes[i];
-      var value = rowData[name];
-      if (typeof value === type) {
-        this[name] = value;
-      } else {
-        this[name] = null;
-      }
-    }
-  }
-}
-
-Row.prototype.get = function(colIdentifier) {
-  return typeof colIdentifier === "number" ? this.getByIndex(colIdentifier) : this[colIdentifier];
-}
-
-Row.prototype.getByIndex = function(colIndex) {
-  var schema = this.schema;
-  var name = schema.columnNames[colIndex];
-  return this[name];
-}
-
-Row.prototype.toString = function(columns) {
-  var columnNames = columns || this.schema.columnNames;
-  var rowString = "";
-  for (var i = 0; i < columnNames.length; i++) {
-    var name = columnNames[i];
-    rowString += this[name] + " ";
-  }
-  return rowString;
-}
-
-Row.prototype.toUniqueString = function(columns) {
-  var columnNames = columns || this.schema.columnNames;
-  var rowString = "";
-  for (var i = 0; i < columnNames.length; i++) {
-    var name = columnNames[i];
-    rowString += this[name] + "|";
-  }
-  return rowString;
-}
 
 module.exports = DataFrame;
-
-/*  var DataFrameRow = function(data) {
-    Row.call(this, data);
-  }
-  DataFrameRow.prototype = Object.create(Row.prototype);
-  DataFrameRow.prototype.columnNames = this.columnNames;
-  DataFrameRow.prototype.columnTypes = this.columnTypes;
-*/
-
-
-
 
 
 

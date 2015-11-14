@@ -36,20 +36,16 @@ var data = [
 ];
 
 var df = new DataFrame(data);
-//df.show();
-//console.log(df.cell(2, 4));
-//console.log(df.row(2).toString());
-//console.log(df.columns.inauguration_year.toArray());
 df = df
-  .mutate("years_in_office", function(row) { return row.last_year - row.inauguration_year; })
-  .select("first_name", "last_name", "years_in_office", {"years_in_office": "years"})
+  .mutate("years", function(row) { return row.last_year - row.inauguration_year })
+  .select("first_name", "last_name", "last_year", "years")
   .rename({"first_name": "first", "last_name": "last"})
   .groupBy("years")
   .summarize(
     {
       "total_years": 
         function(result, row) {
-          return result + row["years"];
+          return result + row["last_year"];
         },
       "combined_first_names":
         function(result, row) {
