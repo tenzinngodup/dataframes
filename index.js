@@ -1,80 +1,48 @@
-var Schema = require("./schema");
-var Operations = require("./operations");
-
-var Operation = Operations.Operation;
-var DataFrameBuilder = Operations.DataFrameBuilder;
-var Reducer = Operations.Reducer;
-var RowTransformer = Operations.RowTransformer;
-var Accumulator = Operations.Accumulator;
-var AccumulatorEnd = Operations.AccumulatorEnd;
-var Distinct = Operations.Distinct;
-var Mutate = Operations.Mutate;
-var Filter = Operations.Filter;
-var GroupBy = Operations.GroupBy;
-var GroupEnd = Operations.GroupEnd;
-var addOperation = Operations.addOperation;
-var addOperations = Operations.addOperations;
-
-var clone = function(original) {
-  // hackish but close enough for now
-  if (typeof original === "object") {
-    var copy = {}
-    for (var key in original) {
-      copy[key] = original[key];
+var DataFrame = function(rowData, columnNames) {
+  var columns = [];
+  var rowIndex = new RowIndex;
+  if (rowData.length) {
+    if (typeof rowData[0] === "object") {
+      this.withJSONData(rowData, columnNames, rowIndex);
     }
-    return copy;
-  } else if (Array.isArray(original)) {
-    copy = [];
-    for (var i = 0; i < init.length; i++) {
-      copy.push(original[i]);
-    }
-  } else {
-    return init;
   }
+  this.rowIndex = rowIndex;
+  this.columns = columns;
 }
 
-var DataFrame = function(data, schema) {
-  var dataArray = [];
-  if (data.length) {
-    if (Array.isArray(data[0])) {
-      this.dataArray = data;
-      this.schema = schema;
-    } else {
-      this.schema = schema || new Schema(this, data[0]);
-      var columnNames = this.schema.getColumnNames();
-      var rowObject, rowArray, name;
-      for (var rowIndex = 0; rowIndex < data.length; rowIndex++) {
-        rowObject = data[rowIndex];     
-        rowArray = [];
-        for (var colIndex = 0; colIndex < columnNames.length; colIndex++) {
-          name = columnNames[colIndex];
-          rowArray.push(rowObject[name]);
-        }
-        dataArray.push(rowArray);
-        this.dataArray = dataArray;
-      }
-    }
-  } else {
-    this.schema = new Schema(this, {});
+DataFrame.prototype.withJSONData = function(rowData, columnNames, rowIndex) {
+  var columns = [];
+  var name;
+  for (var colIndex = 0; colIndex < columnNames.length; colIndex++) {
+    name = columnNames[colIndex];
+    var columnExpression = new JSONColumnExpression(rowIndex, rowData, name);
+    var column = new Column(name, columnExpression);
+    columns.push(column);
+    this[name] = column;
   }
-  this.newSchema = this.schema;
-  this.operations = [];
-  this.groupedOperations = [];
+  this.columns = columns;
+}
+
+DataFrame.prototype.collect() = function() {
+  
+}
+
+var Column = function(name, columnExpression) {
+  this.name = name;
+  this.expression = new columnExpression;
+}
+
+Column.prototype.valueOf = function() {
+  return this.expression.valueOf();
 }
 
 DataFrame.prototype.filter = function(func) {
-  this.addOperation(Filter, func);
+  this.addExpression(Filter, func);
   return this;
 }
 
-DataFrame.prototype._new = function(rows, schema) {
-  return new DataFrame(rows, schema);
-}
-
-DataFrame.prototype.mutate = function(newColumnName, func) {
-  this.addOperation(Mutate, func);
-  var newWidth = this.newSchema.width;
-  var newColumn = new Schema.Column(this, newColumnName, newWidth, "number");
+DataFrame.prototype.mutate = function(newColumnName, arg) {
+  var newColumn = new Column(this, newColumnName, newWidth, "number");
   this.newSchema = new Schema(this, this.newSchema, null, null, [newColumn]);
   return this;
 }
@@ -130,7 +98,7 @@ DataFrame.prototype.distinct = function() {
         }
       }
     }
-    this.addOperation(DistinctColumns);
+    this.addExpression(DistinctColumns);
   }
   return this;
 }
@@ -147,7 +115,7 @@ DataFrame.prototype.summarize = function(summaries) {
     summaryColumns.push(new Schema.Column(this, name, "number", i));
     var obj = summaries[name];
     var constructor;
-    if (obj.prototype instanceof Operation) {
+    if (obj.prototype instanceof Expression) {
       constructor = obj;
       arguments = [obj, this.newSchema, name];
     } else {
@@ -156,12 +124,12 @@ DataFrame.prototype.summarize = function(summaries) {
       if (Array.isArray(obj)) {arguments.concat(obj);} else {arguments.push(obj);}
     }
     var newConstructor = constructor.bind.apply(constructor, arguments);
-    accumulatorChain = addOperation(accumulatorChain, newConstructor);
+    accumulatorChain = addExpression(accumulatorChain, newConstructor);
   }
-  this.addOperation(Reducer, accumulatorChain);
+  this.addExpression(Reducer, accumulatorChain);
   var newSchema = new Schema(this, null, null, null, summaryColumns);
   this.newSchema = newSchema;
-  this.addOperation(RowTransformer);
+  this.addExpression(RowTransformer);
   this.combine();
   return this;
 }
@@ -190,11 +158,11 @@ DataFrame.prototype.groupBy = function(key) {
       return keyString;
     }
   }
-  this.groupedOperations.unshift([this.newSchema, keyFunc, []]);
+  this.groupedExpressions.unshift([this.newSchema, keyFunc, []]);
   return this;
 }
 
-DataFrame.prototype.addOperation = function(constructor) {
+DataFrame.prototype.addExpression = function(constructor) {
   var argLength = arguments.length;
   if (argLength === 0) return;
   var args = [constructor, this.newSchema];
@@ -202,72 +170,33 @@ DataFrame.prototype.addOperation = function(constructor) {
     args.push(arguments[i]);
   }
   var newConstructor = constructor.bind.apply(constructor, args);
-  if (this.groupedOperations.length) {
-    this.groupedOperations[0][2].push(newConstructor);
+  if (this.groupedExpressions.length) {
+    this.groupedExpressions[0][2].push(newConstructor);
   } else {
-    this.operations.push(newConstructor);
+    this.expressions.push(newConstructor);
   }
 }
 
 DataFrame.prototype.combine = function() {
-  var groupByArray = this.groupedOperations.shift();
+  var groupByArray = this.groupedExpressions.shift();
   var schema = groupByArray[0]
   var keyFunction = groupByArray[1];
-  var groupedOperations = groupByArray[2];
-  var newConstructor = constructor.bind.apply(GroupBy, [GroupBy, schema, keyFunction, groupedOperations]);
-  this.operations.push(newConstructor);
+  var groupedExpressions = groupByArray[2];
+  var newConstructor = constructor.bind.apply(GroupBy, [GroupBy, schema, keyFunction, groupedExpressions]);
+  this.expressions.push(newConstructor);
 }
 
 DataFrame.prototype.collect = function() {
   var newSchema = this.newSchema;
   var final = function() { return new DataFrameBuilder(newSchema); }
-  var chain = addOperations(final, this.operations)
-  var operation = chain();
+  var chain = addExpressions(final, this.expressions)
+  var Expression = chain();
   for (var i = 0; i < this.dataArray.length; i++) {
     row = this.dataArray[i];
-    var result = operation.onNext(row);
+    var result = Expression.onNext(row);
     if (!result) break;
   }
-  return operation.onCompleted();
-}
-
-DataFrame.prototype["@@iterator"] = function() {
-  return new RowIterator(this);
-}
-
-DataFrame.prototype.setColumns = function() {
-  var columns = [];
-  var columnNames = this.schema.columnNames;
-  var columnTypes = this.schema.columnTypes;
-  var name, type;
-  for (var i = 0; i < columnNames.length; i++) {
-    name = columnNames[i];
-    type = columnTypes[i];
-    var column = new Column(this, name, type, i);
-    columns[name] = column;
-    columns.push(column);
-  }
-  this.columns = columns;
-}
-
-DataFrame.prototype.row = function(rowIndex) {
-  return this.dataArray[rowIndex];
-}
-
-DataFrame.prototype.cell = function(rowIndex, colIndex) {
-  var row = this.dataArray[rowIndex];
-  return typeof row !== "undefined" ? row.get(colIndex) : undefined;
-}
-
-DataFrame.prototype.slice = function(startIndex, endIndex) {
-  return new DataFrame(this.dataArray.slice(startIndex, endIndex), this.schema);
-}
-
-DataFrame.prototype.show = function() {
-  console.log(this.schema.toString());
-  for (var rowIndex = 0; rowIndex < this.dataArray.length; rowIndex++) {
-    console.log(this.dataArray[rowIndex]);
-  }
+  return Expression.onCompleted();
 }
 
 

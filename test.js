@@ -1,4 +1,14 @@
-var DataFrame = require("./index");
+var Expressions = require("./expressions.js");
+var Operations = require("./operations.js");
+
+var ArrayColumnExpression = Expressions.ArrayColumnExpression;
+var JSONColumnExpression = Expressions.JSONColumnExpression;
+var square = Expressions.square;
+
+var RowIndex = Operations.RowIndex;
+var TerminalOperation = Operations.TerminalOperation;
+var TapOperation = Operations.TapOperation;
+var IterateOperation = Operations.IterateOperation;
 
 var data = [
 	{
@@ -35,22 +45,15 @@ var data = [
 	}
 ];
 
-var df = new DataFrame(data);
-df = df
-  .mutate("years", function(row) { return row.last_year - row.inauguration_year })
-  .select("first_name", "last_name", "last_year", "years")
-  .rename({"first_name": "first", "last_name": "last"})
-  .groupBy("years")
-  .summarize(
-    {
-      "total_years": 
-        function(result, row) {
-          return result + row["last_year"];
-        },
-      "combined_first_names":
-        function(result, row) {
-          result = result || "";
-          return "" + result + row["first"] + " ";
-        }
-  });
-df = df.collect().show();
+var rowIndex = new RowIndex(0, data.length);
+
+var jsColumn = new JSONColumnExpression(rowIndex, data, "birth_year");
+
+var sq = square(function() { return jsColumn + 1; } );
+
+var termOp = new TerminalOperation();
+var tapOp = new TapOperation(termOp, sq, function(exp) { console.log(exp.value())} );
+var itOp = new IterateOperation(tapOp, rowIndex)
+
+itOp.onNext();
+
