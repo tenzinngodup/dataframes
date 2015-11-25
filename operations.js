@@ -1,26 +1,20 @@
-var RowIndex = function(start, end) {
-  this.start = start;
-  this.value = start;
-  this.end = end;
-}
-
 var Operation = function(subscriber) {
   this.subscriber = subscriber;
 }
 
-var IterateOperation = function(subscriber, rowIndex) {
-  this.rowIndex = rowIndex;
+var IterateOperation = function(subscriber, start, end) {
+  this.start = start;
+  this.end = end;
   this.subscriber = subscriber;
 }
 IterateOperation.prototype = Object.create(Operation.prototype);
 IterateOperation.prototype.constructor = IterateOperation;
 
-IterateOperation.prototype.onNext = function() {
-  var rowIndex = this.rowIndex;
-  var end = rowIndex.end;
+IterateOperation.prototype.onNext = function(index) {
+  var end = this.end;
   var subscriber = this.subscriber;
-  for (rowIndex.value = rowIndex.start; rowIndex.value < end; rowIndex.value++) {
-    subscriber.onNext();
+  for (var index = this.start; index < end; index++) {
+    subscriber.onNext(index);
   }
   return subscriber.onCompleted();
 }
@@ -29,7 +23,7 @@ var TerminalOperation = function() {}
 TerminalOperation.prototype = Object.create(Operation.prototype);
 TerminalOperation.prototype.constructor = TerminalOperation;
 
-TerminalOperation.prototype.onNext = function() {}
+TerminalOperation.prototype.onNext = function(index) {}
 
 TerminalOperation.prototype.onCompleted = function() {}
 
@@ -41,28 +35,27 @@ var TapOperation = function(subscriber, expression, func) {
 TapOperation.prototype = Object.create(Operation.prototype);
 TapOperation.prototype.constructor = TapOperation;
 
-TapOperation.prototype.onNext = function() {
-  this.func(this.expression);
-  this.subscriber.onNext();
+TapOperation.prototype.onNext = function(index) {
+  this.func(this.expression, index);
+  this.subscriber.onNext(index);
 }
 
 TapOperation.prototype.onCompleted = function() {
   return this.subscriber.onCompleted();
 }
 
-var AccumulateOperation = function(subscriber, rowIndex, expression) {
+var AccumulateOperation = function(subscriber, expression, start, end) {
   this.start = start;
-  this.end = end
+  this.end = end;
   this.expression = expression;
-  this.rowIndex = rowIndex;
   this.indices = [];
 }
 AccumulateOperation.prototype = Object.create(Operation.prototype);
 AccumulateOperation.prototype.constructor = AccumulateOperation;
 
-AccumulateOperation.prototype.onNext = function() {
-  this.indices.append(this.rowIndex.value);
-  return this.expression.accumulate();
+AccumulateOperation.prototype.onNext = function(index) {
+  this.indices.append(index);
+  return this.expression.accumulate(index);
 }
 
 AccumulateOperation.prototype.onCompleted = function() {
@@ -71,13 +64,11 @@ AccumulateOperation.prototype.onCompleted = function() {
   var expression = this.expression;
   while (!expression.accumulated) {
     for (var i = 0; i < indices.length; i++) {
-      rowIndex.value = indices[i];
-      expression.accumulate();
+      expression.accumulate(indices[i]);
     }
   }
   for (var i = 0; i < indices.length; i++) {
-    rowIndex.value = indices[i];
-    this.subscriber.onNext();
+    this.subscriber.onNext(indices[i]);
   }
 }
 
@@ -89,16 +80,15 @@ var FilterOperation = function(subscriber, expression) {
 FilterOperation.prototype = Object.create(Operation.prototype);
 FilterOperation.prototype.constructor = FilterOperation;
 
-FilterOperation.prototype.onNext = function() {
-  if (this.expression.value()) {
-    return this.subscriber.onNext();
+FilterOperation.prototype.onNext = function(index) {
+  if (this.expression.value(index)) {
+    return this.subscriber.onNext(index);
   } else {
     return;
   }
 }
 
 var Operations = {};
-Operations.RowIndex = RowIndex;
 Operations.IterateOperation = IterateOperation;
 Operations.TapOperation = TapOperation;
 Operations.TerminalOperation = TerminalOperation;

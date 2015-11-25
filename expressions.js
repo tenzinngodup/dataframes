@@ -1,42 +1,51 @@
 var ExpressionManager = function() {
   this.builder = new ExpressionBuilder(this);
   this.evaluator = new ExpressionEvaluator(this);
-  this.creator = new ExpressionCreator(this);
-  this.handler = this.creator;
+  this.default = new ExpressionDefault(this);
+  this.handler = this.default;
 }
 
-ExpressionManager.prototype.evaluate = function(expression, func) {
-  this.handler.evaluate(expression, func);
+ExpressionManager.prototype.evaluate = function(expression) {
+  return this.handler.evaluate(expression);
 }
 
-ExpressionManager.prototype.build = function(expression, argument) {
+ExpressionManager.prototype.build = function(expression) {
   return this.handler.build(expression, argument);
+}
+
+ExpressionManager.prototype.getValueOf = function(expression) {
+  return this.handler.getValueOf(expression);
+}
+
+ExpressionManager.prototype.setup = function(expression) {
+  return this.handler.setup(expression);
 }
 
 ExpressionManager.prototype.create = function(expression, argument) {
   return this.handler.create(expression, argument);
 }
 
-ExpressionManager.prototype.get = function(expression, argument) {
-  return this.handler.get(expression, argument);
-}
-
 var ExpressionHandler = function() {}
 
-ExpressionHandler.prototype.build = function(expression, arg) {
+ExpressionHandler.prototype.build = function(expression) {
   // if this is called, switch to the builder
   var oldHandler = this.manager.handler;
   this.manager.handler = this.manager.builder;
-  this.manager.builder.build(expression, func);
+  this.manager.builder.build(expression);
   this.manager.handler = oldHandler;
 }
 
-ExpressionHandler.prototype.evaluate = function(expression, arg) {
+ExpressionHandler.prototype.evaluate = function(expression) {
   // if this is called, switch to the evaluator
   var oldHandler = this.manager.handler;
   this.manager.handler = this.manager.evaluator;
-  this.manager.evaluator.evaluate(expression, arg);
+  var value = this.manager.evaluator.evaluate(expression);
   this.manager.handler = oldHandler;
+  return value;
+}
+
+ExpressionHandler.prototype.create = function(expressionConstructor, argument) {
+  return new expressionConstructor(argument);
 }
 
 var ExpressionBuilder = function(manager) {
@@ -46,77 +55,68 @@ var ExpressionBuilder = function(manager) {
 ExpressionBuilder.prototype = Object.create(ExpressionHandler.prototype);
 ExpressionBuilder.prototype.constructor = ExpressionBuilder;
 
-ExpressionBuilder.prototype.build = function(expression, func) {
+ExpressionBuilder.prototype.build = function(expression) {
   var parentExpression = this._expression;
   this._expression = expression;
-  var result = func();
+  var result = expression.func();
   if (typeof result === "object" && result instanceof Expression) {
     this._expression.addExpression(result);
   }
   this._expression = parentExpression;
-  return (parentExpression) ? expression.stubValue() : expression;
 }
 
-ExpressionBuilder.prototype.get = function(expression, argument) {
-  var expression = new Expression(argument);
+ExpressionBuilder.prototype.setup = function(expression) {
+  return this.build(expression);
+}
+
+ExpressionBuilder.prototype.getValueOf = function(expression) {
   this._expression.addExpression(expression);
   return expression.stubValue();
 }
 
-ExpressionEvaluator = function(manager) {
+var ExpressionEvaluator = function(manager) {
   this.manager = manager;
   this._expression = null;
 }
 ExpressionEvaluator.prototype = Object.create(ExpressionHandler.prototype);
 ExpressionEvaluator.prototype.constructor = ExpressionEvaluator;
 
-ExpressionEvaluator.prototype.evaluate = function(expression, func) {
-  // if this is called, switch to the evaluator
-  var oldHandler = this.manager.handler;
-  this.manager.handler = this.manager.evaluator;
-  this.manager.evaluator.evaluate(expression, func);
-  this.manager.handler = oldHandler;
-}
-
-ExpressionEvaluator.prototype.build = function(expression, func) {
-  // if this is called, switch to the builder
-  var oldHandler = this.manager.handler;
-  this.manager.handler = this.manager.builder;
-  this.manager.builder.build(expression, func);
-  this.manager.handler = oldHandler;
-}
-
-ExpressionEvaluator.prototype.evaluate = function(expression, func) {
-  var oldGetter = this._getter;
-  this._getter = new ExpressionValueGetter(expression);
-  var value = func();
-  this._getter = oldGetter;
+ExpressionEvaluator.prototype.evaluate = function(expression, index) {
+  var getter = expression.getter;
+  var parentGetter = this._getter;
+  this._getter = getter;
+  var value = expression.func();
+  while (value instanceof Expression) {
+    value = value.value(index);
+  }
+  this._getter = getter;
   return value;
 }
 
-var ExpressionCreator = function(manager) {
+ExpressionEvaluator.prototype.getValueOf = function(expression) {
+  return this._getter.valueOf();
+}
+
+ExpressionEvaluator.prototype.setup = function(expression) {
+  return expression;
+}
+
+ExpressionEvaluator.prototype.create = function(expressionConstructor, argument) {
+  return this._getter;
+}
+
+var ExpressionDefault = function(manager) {
   this.manager = manager;
 }
-ExpressionCreator.prototype = Object.create(ExpressionHandler.prototype);
-ExpressionCreator.prototype.constructor = ExpressionCreator;
+ExpressionDefault.prototype = Object.create(ExpressionHandler.prototype);
+ExpressionDefault.prototype.constructor = ExpressionDefault;
 
-
-ExpressionCreator.prototype.get = function(expression, arg) {
-  return new expression(arg);
+ExpressionDefault.prototype.getValueOf = function(expression) {
+  return expression.value();
 }
 
-
-ExpressionValueGetter = function(expression) {
-  this.opIndex = 0;
-  this.subExpressions = expression.subExpressions;
-};
-
-ExpressionValueGetter.prototype.valueOf = function() {
-  return this.subExpressions[this.opIndex].value();
-};
-
-ExpressionEvaluator.prototype.get = function(expression, argument) {
-  return this._expression.getSubExpression;
+ExpressionDefault.prototype.setup = function(expression) {
+  return this.build(expression);
 }
 
 var Expression = function(arg) {
@@ -131,10 +131,7 @@ var Expression = function(arg) {
 }
 
 Expression.prototype.valueOf = function() {
-  return expManager.get(this);
-}
-
-Expression.prototype.build = function() {
+  return expManager.getValueOf(this);
 }
 
 Expression.prototype.stubValue = function() {
@@ -149,70 +146,81 @@ Expression.prototype.finishAccumulating = function() {
   this.accumulated = true;
 }
 
+var SubExpressionGetter = function(expression) {
+  this.expIndex = 0;
+  this.subExpressions = expression.subExpressions;
+}
+
+SubExpressionGetter.prototype.set = function(rowIndex) {
+  this.rowIndex = rowIndex;
+  this.expIndex = 0;
+}
+
+SubExpressionGetter.prototype.valueOf = function() {
+  return this.subExpressions[this.expIndex++].value(this.rowIndex);
+}
+
 var FunctionExpression = function(func) {
   this.func = func;
   this.subExpressions = [];
+  this.getter = new SubExpressionGetter(this);
+  expManager.setup(this);
 }
+FunctionExpression.prototype = Object.create(Expression.prototype);
+FunctionExpression.prototype.constructor = FunctionExpression;
 
 FunctionExpression.prototype.addExpression = function(expression) {
   this.subExpressions.push(expression);
 }
 
-FunctionExpression.prototype.value = function() {
+FunctionExpression.prototype.value = function(index) {
+  this.getter.set(index);
   return expManager.evaluate(this, this.func);
 }
 
 var SquareExpression = function(arg) {
   Expression.call(this, arg);
 }
+SquareExpression.prototype = Object.create(Expression.prototype);
+SquareExpression.prototype.constructor = SquareExpression;
 
-SquareExpression.prototype.value = function() {
+SquareExpression.prototype.value = function(index) {
   var exp = this.subExpression;
-  return exp.value() * exp.value();
+  return exp.value(index) * exp.value(index);
 }
 
-var ColumnExpression = function(arg) {
-  Expression.call(this, arg);
-}
-ColumnExpression.prototype = Object.create(Expression.prototype);
-ColumnExpression.prototype.constructor = ColumnExpression;
-
-var JSONColumnExpression = function(rowIndex, data, name) {
-  this.rowIndex = rowIndex;
+var JSONColumnExpression = function(data, name) {
   this.data = data;
   this.name = name;
 }
-JSONColumnExpression.prototype = Object.create(ColumnExpression.prototype);
+JSONColumnExpression.prototype = Object.create(Expression.prototype);
 JSONColumnExpression.prototype.constructor = JSONColumnExpression;
 
-JSONColumnExpression.prototype.value = function() {
-  return this.data[this.rowIndex.value][this.name];
+JSONColumnExpression.prototype.value = function(index) {
+  return this.data[index][this.name];
 }
 
-var ArrayColumnExpression = function(rowIndex, expression) {
-  this.rowIndex = rowIndex;
+var ArrayColumnExpression = function(expression) {
   this.expression = expression;
   this.data = [];
 }
-ArrayColumnExpression.prototype = Object.create(ColumnExpression.prototype);
+ArrayColumnExpression.prototype = Object.create(Expression.prototype);
 ArrayColumnExpression.prototype.constructor = ArrayColumnExpression;
 
 ArrayColumnExpression.accumulate = function() {
   this.data.push(this.expression.value());
 }
 
-ArrayColumnExpression.value = function() {
-  return this.data[this.rowIndex.value];
+ArrayColumnExpression.value = function(index) {
+  return this.data[index];
 }
 
 var expManager = new ExpressionManager();
 
-console.log(expManager.handler)
-
 var Expressions = {};
 
 var square = function(arg) {
-  return expManager.get(SquareExpression, arg);
+  return expManager.create(SquareExpression, arg);
 }
 
 Expressions.ArrayColumnExpression = ArrayColumnExpression;

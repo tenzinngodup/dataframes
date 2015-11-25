@@ -14,7 +14,7 @@ var data = [
 	{
 		"first_name": "George", 
 		"last_name": "Washington",
-		"birth_year": 1732,
+		"birth_year": 1,
 		"death_year": 1799,
 		"inauguration_year": 1789,
 		"last_year": 1797
@@ -22,7 +22,7 @@ var data = [
 	{
 		"first_name": "John", 
 		"last_name": "Adams",
-		"birth_year": 1735,
+		"birth_year": 2,
 		"death_year": 1826,
 		"inauguration_year": 1797,
 		"last_year": 1801
@@ -30,7 +30,7 @@ var data = [
 	{
 		"first_name": "Thomas", 
 		"last_name": "Jefferson",
-		"birth_year": 1743,
+		"birth_year": 3,
 		"death_year": 1826,
 		"inauguration_year": 1801,
 		"last_year": 1809
@@ -38,22 +38,20 @@ var data = [
 	{
 		"first_name": "Thomas", 
 		"last_name": "Jefferson",
-		"birth_year": 1743,
+		"birth_year": 4,
 		"death_year": 1826,
 		"inauguration_year": 1801,
 		"last_year": 1809
 	}
 ];
 
-var rowIndex = new RowIndex(0, data.length);
+var jsColumn = new JSONColumnExpression(data, "birth_year");
 
-var jsColumn = new JSONColumnExpression(rowIndex, data, "birth_year");
-
-var sq = square(function() { return jsColumn + 1; } );
+var sq = square(() => { return jsColumn + square(function() { return jsColumn + 5; }); });
 
 var termOp = new TerminalOperation();
-var tapOp = new TapOperation(termOp, sq, function(exp) { console.log(exp.value())} );
-var itOp = new IterateOperation(tapOp, rowIndex)
+var tapOp = new TapOperation(termOp, sq, function(exp, index) { console.log(exp.value(index))} );
+var itOp = new IterateOperation(tapOp, 0, 4);
 
 itOp.onNext();
 
