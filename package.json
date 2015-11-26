@@ -21,5 +21,9 @@
   "bugs": {
     "url": "https://github.com/danrobinson/dataframes/issues"
   },
-  "homepage": "https://github.com/danrobinson/dataframes#readme"
+  "homepage": "https://github.com/danrobinson/dataframes#readme",
+  "dependencies": {
+    "rx": "^4.0.7",
+    "rxjs": "^5.0.0-alpha.10"
+  }
 }

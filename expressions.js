@@ -200,18 +200,13 @@ JSONColumnExpression.prototype.value = function(index) {
   return this.data[index][this.name];
 }
 
-var ArrayColumnExpression = function(expression) {
-  this.expression = expression;
-  this.data = [];
+var ArrayColumnExpression = function(data) {
+  this.data = data;
 }
 ArrayColumnExpression.prototype = Object.create(Expression.prototype);
 ArrayColumnExpression.prototype.constructor = ArrayColumnExpression;
 
-ArrayColumnExpression.accumulate = function() {
-  this.data.push(this.expression.value());
-}
-
-ArrayColumnExpression.value = function(index) {
+ArrayColumnExpression.prototype.value = function(index) {
   return this.data[index];
 }
 
@@ -228,3 +223,5 @@ Expressions.JSONColumnExpression = JSONColumnExpression;
 Expressions.square = square;
 
 module.exports = Expressions;
+
+

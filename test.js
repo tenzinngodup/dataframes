@@ -1,14 +1,10 @@
 var Expressions = require("./expressions.js");
 var Operations = require("./operations.js");
+var Rx = require("rx");
 
 var ArrayColumnExpression = Expressions.ArrayColumnExpression;
 var JSONColumnExpression = Expressions.JSONColumnExpression;
 var square = Expressions.square;
-
-var RowIndex = Operations.RowIndex;
-var TerminalOperation = Operations.TerminalOperation;
-var TapOperation = Operations.TapOperation;
-var IterateOperation = Operations.IterateOperation;
 
 var data = [
 	{
@@ -45,13 +41,57 @@ var data = [
 	}
 ];
 
-var jsColumn = new JSONColumnExpression(data, "birth_year");
+var number_data = [];
+var name_data = [];
+var letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
-var sq = square(() => { return jsColumn + square(function() { return jsColumn + 5; }); });
+for (var i = 0; i < 100000; i++) {
+	number_data.push(Math.floor(Math.random() * 100));
+	name_data.push(letters[Math.floor(Math.random() * 26)]);
+}
 
-var termOp = new TerminalOperation();
-var tapOp = new TapOperation(termOp, sq, function(exp, index) { console.log(exp.value(index))} );
-var itOp = new IterateOperation(tapOp, 0, 4);
+var number = new ArrayColumnExpression(number_data);
+var name = new ArrayColumnExpression(name_data);
 
-itOp.onNext();
+var sq = square(() => { return number + square(function() { return number + 5; }); });
+
+var source = Rx.Observable
+	.range(0, 100000)
+	.groupBy(function(i) { return name.value(i); })
+	.selectMany(function(group) {
+		return group
+		  .sum(function(x) { return sq.value(x); });
+	});
+
+var results = [];
+
+console.time("streams");
+
+var subscription = source.subscribe(
+  function (x) {
+    results.push(x);
+  }
+);
+
+console.timeEnd("streams");
+
+console.time("manual loop");
+
+var groups = {};
+
+for (var i = 0; i < 100000; i++) {
+	var letter = name.value(i);
+	if (!groups[letter]) {
+		groups[letter] = 0;
+	}
+	groups[letter] += sq.value(i);
+}
+
+var letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+var results = [];
+for (var i = 0; i < 26; i++) {
+	results.push(groups[letters[i]]);
+}
+
+console.timeEnd("manual loop");
 
