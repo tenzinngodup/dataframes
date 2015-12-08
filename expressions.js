@@ -5,8 +5,8 @@ var ExpressionManager = function() {
   this.handler = this.default;
 }
 
-ExpressionManager.prototype.evaluate = function(expression) {
-  return this.handler.evaluate(expression);
+ExpressionManager.prototype.evaluate = function(expression, row) {
+  return this.handler.evaluate(expression, row);
 }
 
 ExpressionManager.prototype.build = function(expression) {
@@ -35,11 +35,11 @@ ExpressionHandler.prototype.build = function(expression) {
   this.manager.handler = oldHandler;
 }
 
-ExpressionHandler.prototype.evaluate = function(expression) {
+ExpressionHandler.prototype.evaluate = function(expression, row) {
   // if this is called, switch to the evaluator
   var oldHandler = this.manager.handler;
   this.manager.handler = this.manager.evaluator;
-  var value = this.manager.evaluator.evaluate(expression);
+  var value = this.manager.evaluator.evaluate(expression, row);
   this.manager.handler = oldHandler;
   return value;
 }
@@ -81,13 +81,13 @@ var ExpressionEvaluator = function(manager) {
 ExpressionEvaluator.prototype = Object.create(ExpressionHandler.prototype);
 ExpressionEvaluator.prototype.constructor = ExpressionEvaluator;
 
-ExpressionEvaluator.prototype.evaluate = function(expression, index) {
+ExpressionEvaluator.prototype.evaluate = function(expression, row) {
   var getter = expression.getter;
   var parentGetter = this._getter;
   this._getter = getter;
   var value = expression.func();
   while (value instanceof Expression) {
-    value = value.value(index);
+    value = value.value(row);
   }
   this._getter = getter;
   return value;
@@ -120,14 +120,41 @@ ExpressionDefault.prototype.setup = function(expression) {
 }
 
 var Expression = function(arg) {
+  this.filterLevel = 0;
+  this.groupLevel = 0;
   this.accumulated = true;
   if (typeof arg === "function") {
-    this.subExpression = new FunctionExpression(arg);
+    this.subExpressions = [new FunctionExpression(arg)];
   } else if (typeof arg === "object") {
     if (arg instanceof Expression) {
-      this.subExpression = arg;
+      this.subExpressions = [arg];
     }
   }
+  this.signature = this.getSignature();
+}
+
+Expression.prototype.operate = function(row) {
+  row.operationValues.set(this.signature, this.value(row));
+}
+
+Expression.prototype.getSignature = function() {
+  var sig = this.value.toString();
+  for (var i = 0; i < this.subExpressions.length; i++) {
+    sig += this.subExpressions[i].signature;
+  }
+  return sig;
+}
+
+Expression.prototype.fromSignature = function(row) {
+  return row.operationValues.get(this.signature);
+}
+
+Expression.prototype.init = function() {
+  return null;
+}
+
+Expression.prototype.dependencies = function() {
+  return this.subExpressions;
 }
 
 Expression.prototype.valueOf = function() {
@@ -138,8 +165,12 @@ Expression.prototype.stubValue = function() {
   return 0;
 }
 
-Expression.prototype.value = function() {
-  return this.subExpression.value();
+Expression.prototype.value = function(row) {
+  return this.subExpressions[0].fromSignature(row);
+}
+
+Expression.prototype.finishAccumulating = function() {
+  this.accumulated = true;
 }
 
 Expression.prototype.finishAccumulating = function() {
@@ -151,13 +182,13 @@ var SubExpressionGetter = function(expression) {
   this.subExpressions = expression.subExpressions;
 }
 
-SubExpressionGetter.prototype.set = function(rowIndex) {
-  this.rowIndex = rowIndex;
+SubExpressionGetter.prototype.set = function(row) {
+  this.row = row;
   this.expIndex = 0;
 }
 
 SubExpressionGetter.prototype.valueOf = function() {
-  return this.subExpressions[this.expIndex++].value(this.rowIndex);
+  return this.subExpressions[this.expIndex++].fromSignature(this.row);
 }
 
 var FunctionExpression = function(func) {
@@ -165,17 +196,26 @@ var FunctionExpression = function(func) {
   this.subExpressions = [];
   this.getter = new SubExpressionGetter(this);
   expManager.setup(this);
+  this.signature = this.getSignature();
 }
 FunctionExpression.prototype = Object.create(Expression.prototype);
 FunctionExpression.prototype.constructor = FunctionExpression;
+
+FunctionExpression.prototype.getSignature = function() {
+  return this.func.toString();
+}
+
+FunctionExpression.prototype.dependencies = function() {
+  return this.subExpressions;
+}
 
 FunctionExpression.prototype.addExpression = function(expression) {
   this.subExpressions.push(expression);
 }
 
-FunctionExpression.prototype.value = function(index) {
-  this.getter.set(index);
-  return expManager.evaluate(this, this.func);
+FunctionExpression.prototype.value = function(row) {
+  this.getter.set(row);
+  return expManager.evaluate(this, row);
 }
 
 var SquareExpression = function(arg) {
@@ -184,30 +224,32 @@ var SquareExpression = function(arg) {
 SquareExpression.prototype = Object.create(Expression.prototype);
 SquareExpression.prototype.constructor = SquareExpression;
 
-SquareExpression.prototype.value = function(index) {
-  var exp = this.subExpression;
-  return exp.value(index) * exp.value(index);
+SquareExpression.prototype.value = function(row) {
+  var exp = this.subExpressions[0];
+  return exp.value(row) * exp.value(row);
 }
 
-var JSONColumnExpression = function(data, name) {
-  this.data = data;
+var ColumnExpression = function(name) {
   this.name = name;
+  this.signature = this.getSignature();
 }
-JSONColumnExpression.prototype = Object.create(Expression.prototype);
-JSONColumnExpression.prototype.constructor = JSONColumnExpression;
+ColumnExpression.prototype = Object.create(Expression.prototype);
+ColumnExpression.prototype.constructor = ColumnExpression;
 
-JSONColumnExpression.prototype.value = function(index) {
-  return this.data[index][this.name];
+ColumnExpression.prototype.dependencies = function() {
+  return [];
 }
 
-var ArrayColumnExpression = function(data) {
-  this.data = data;
+ColumnExpression.prototype.getSignature = function() {
+  return this.name;
 }
-ArrayColumnExpression.prototype = Object.create(Expression.prototype);
-ArrayColumnExpression.prototype.constructor = ArrayColumnExpression;
 
-ArrayColumnExpression.prototype.value = function(index) {
-  return this.data[index];
+ColumnExpression.prototype.value = function(row) {
+  return row.values[this.name];
+}
+
+ColumnExpression.prototype.fromSignature = function(row) {
+  return row.values[this.name];
 }
 
 var expManager = new ExpressionManager();
@@ -218,9 +260,9 @@ var square = function(arg) {
   return expManager.create(SquareExpression, arg);
 }
 
-Expressions.ArrayColumnExpression = ArrayColumnExpression;
-Expressions.JSONColumnExpression = JSONColumnExpression;
+Expressions.ColumnExpression = ColumnExpression;
 Expressions.square = square;
+Expressions.Expression = Expression;
 
 module.exports = Expressions;
 
