@@ -1,12 +1,10 @@
 var Expressions = require("./expressions.js");
-var Operations = require("./operations.js");
-var Rx = require("rx");
-
-var FilterOperation = Operations.FilterOperation;
-var MutateOperation = Operations.MutateOperation;
+var Topology = require("./topology.js").Topology;
 
 var ColumnExpression = Expressions.ColumnExpression;
 var square = Expressions.square;
+var cumsum = Expressions.cumsum;
+var Expression = Expressions.Expression;
 
 var data = [
 	{
@@ -47,72 +45,17 @@ var data = [
 	}
 ];
 
-var first_name = new ColumnExpression("first_name");
-var pres_number = new ColumnExpression("pres_number");
+var simple = new Expression(function(row) { return cumsum(row.pres_number); });
+var filtered = new Expression(function(row) { return cumsum(row.pres_number); });
 
-var sq = square(function() { return pres_number + square(pres_number); });
-
-var Row = function(index, columnNames, rowData) {
-	var colName;
-	this.index = index;
-	this.values = {};
-	for (var j = 0; j < columnNames.length; j++) {
-		colName = columnNames[j];
-		this.values[colName] = rowData[colName];
-	}
-	this.filtersPassed = 0;
-	this.groupIndex = NaN;
-	this.operationValues = new Map();
-}
-
-var Operator = function() {
-	this.groups = [];
-	this.filtersTested = 0;
-}
-
-var Topology = function() {
-	this.columns = [];
-	this.operations = [];
-}
-
-Topology.prototype.addOperation = function(operation) {
-	this.addDependencies(operation);
-}
-
-Topology.prototype.addDependencies = function(operation) {
-	var opExpression = operation.expression;
-	if (opExpression instanceof ColumnExpression) {
-		if (this.columns.indexOf(opExpression.name) === -1) {
-			this.columns.push(opExpression.name);			
-		}
-	} else {
-		var dependencies = opExpression.dependencies();		
-		for (var i = 0; i < dependencies.length; i++) {
-			dependency = dependencies[i];
-			this.addDependencies(new MutateOperation(dependency, dependency.getSignature()));
-		}
-		this.operations.push(operation);
-	}
-}
-
-Topology.prototype.execute = function(row) {
-	for (var i = 0; i < this.operations.length; i++) {
-		this.operations[i].execute(row);
-	}
-}
-
-var mutation = new MutateOperation(sq, "pres_number_squared");
-var filter = new FilterOperation(function() { return first_name === "Thomas" });
 
 var top = new Topology();
 
-top.addOperation(mutation);
+top.addMutation(simple, "simple_cumsum");
+top.generate(data);
 
-var row;
 for (var i = 0; i < 4; i++) {
-	row = new Row(i, top.columns, data[i]);
-	top.execute(row);
-	console.log(row);
+	top.execute(i);
 }
 
 
