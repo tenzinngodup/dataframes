@@ -1,10 +1,8 @@
-var Row = function(index, columnNames, rowData, states) {
-	var colName;
+var Row = function(index, columnNames, rowData) {
 	this.index = index;
-  this.states = states;
 	this.values = {};
-	this.prepValues = [];
-	for (var j = 0; j < columnNames.length; j++) {
+	var colName;
+  for (var j = 0; j < columnNames.length; j++) {
 		colName = columnNames[j];
 		this.values[colName] = rowData[colName];
 	}

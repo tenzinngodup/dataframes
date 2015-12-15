@@ -137,6 +137,7 @@ var Expression = function(arg) {
 }
 
 Expression.prototype.accumulatorChain = function(chain) {
+  console.log("accumulating");
   for (var i = 0; i < this.subExpressions.length; i++) {
     chain = this.subExpressions[i].accumulatorChain(chain);
   }
