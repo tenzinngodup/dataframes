@@ -1,12 +1,6 @@
-var Row = function(index, columnNames, rowData) {
+var Row = function(index, data) {
 	this.index = index;
-	this.values = {};
-	var colName;
-  for (var j = 0; j < columnNames.length; j++) {
-		colName = columnNames[j];
-		this.values[colName] = rowData[colName];
-	}
-	this.filtersPassed = 0;
+	this.values = data[index];
 	this.groupIndex = 0;
 }
 

@@ -1,8 +1,8 @@
 var Expressions = require("./expressions.js");
 var Topology = require("./topology.js").Topology;
 
-var ColumnExpression = Expressions.ColumnExpression;
 var square = Expressions.square;
+var sum = Expressions.sum;
 var cumsum = Expressions.cumsum;
 var Expression = Expressions.Expression;
 
@@ -39,23 +39,17 @@ var data = [
 		"last_name": "Madison",
 		"party": "Democratic-Republican", 
 		"pres_number": 4,
-		"death_year": 1826,
-		"inauguration_year": 1801,
-		"last_year": 1809
+		"death_year": 1836,
+		"inauguration_year": 1809,
+		"last_year": 1817
 	}
 ];
 
-var simple = new Expression(function(row) { return cumsum(row.pres_number); });
-var filtered = new Expression(function(row) { return cumsum(row.pres_number); });
+var top = new Topology(data);
 
-
-var top = new Topology();
-
-top.addMutation(simple, "simple_cumsum");
-top.generate(data);
-
-for (var i = 0; i < 4; i++) {
-	top.execute(i);
-}
-
+top.addGroupBy("party");
+top.addSummarize("total_pres_number", (row) => sum(row.pres_number));
+top.addTap((row) => console.log(row));
+top.generate();
+top.execute();
 
