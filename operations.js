@@ -3,8 +3,23 @@ var FunctionExpression = Expressions.FunctionExpression;
 var nullExp = Expressions.nullExp;
 var Row = require("./row.js").Row;
 
+var Group = function(groupName, groupKey, groupIndex) {
+	this.groupName = groupName;
+	this.groupKey = groupKey;
+	this.groupIndex = groupIndex;
+}
+
 var Result = function(group) {
+	this.groups = [group];
   this.values = {};
+}
+
+Result.prototype.pushGroup = function(group) {
+	this.groups.push(group);
+}
+
+Result.prototype.popGroup = function() {
+	return this.groups.pop();
 }
 
 var Operation = function() {
@@ -131,8 +146,9 @@ SummarizeOperation.prototype.step = function(row) {
 
 SummarizeOperation.prototype.complete = function(result) {
   var newRow = {}
-  newRow[result.groupName] = result.groupKey;
-  newRow[this.name] = this.expression.summarize(result);
+  var group = result.popGroup();
+  newRow[group.groupName] = group.groupKey;
+  newRow[this.name] = this.expression.summarize(group);
   this.nextOperation.step(newRow);
 }
 
@@ -165,6 +181,7 @@ GroupByOperation.prototype.execute = function(row) {
 }
 
 GroupByOperation.prototype.complete = function(result) {
+	console.log(row);
   var groupMap = this.groupMappings[result.groupIndex];
   var groupKeys = groupMap.keys();
   for (var key of groupKeys) {
