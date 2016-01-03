@@ -74,7 +74,7 @@ ExpressionSummarizer.prototype.summarize = function(expression, group) {
   // calculate result of a SummaryFunctionExpression
   this._nextExpression = expression.nextExpression;
   this._groupIndex = group.groupIndex;
-  return expression.func(groupIndex);
+  return expression.func(group);
 }
 
 ExpressionSummarizer.prototype.get = function(expressionConstructor, arg) {

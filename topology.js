@@ -17,6 +17,7 @@ var Topology = function(data) {
   this.data = data;
   this.operator = new GenerateRowOperation(data);
   this.lastOperation = this.operator;
+  this.groupByOps = [];
 }
 
 Topology.prototype.addOperation = function(op) {
@@ -46,14 +47,18 @@ Topology.prototype.addGroupBy = function(name, arg) {
   var groupByExp = new FunctionExpression(func);
   var groupByOp = new GroupByOperation(name, groupByExp);
   this.addOperation(groupByOp);
+  this.groupByOps.push(groupByOp);
 }
 
 Topology.prototype.addSummarize = function(name, func) {
   var summarizeExp = new SummaryFunctionExpression(func);
   var summarizeOp = new SummarizeOperation(name, summarizeExp);
   this.addOperation(summarizeOp);
+  var lastGroupByOp = this.groupByOps.pop();
+  if (lastGroupByOp !== undefined) {
+    lastGroupByOp.summarizer = summarizeOp;    
+  }
 }
-
 
 Topology.prototype.addTap = function(func) {
   var tapOp = new TapOperation(func);
