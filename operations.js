@@ -8,26 +8,16 @@ var Row = function(values, groupIndex) {
   this.groupIndex = groupIndex;
 }
 
-var Group = function(groupIndex, groupName, groupKey) {
-  this.groupIndex = groupIndex;
-	this.groupName = groupName;
-	this.groupKey = groupKey;
+var Result = function() {
+	this.groupings = [];
 }
 
-var Result = function(group) {
-	this.groups = [group];
+Result.prototype.pushGrouping = function(grouping) {
+	this.groupings.push(grouping);
 }
 
-Result.prototype.pushGroup = function(group) {
-	this.groups.push(group);
-}
-
-Result.prototype.popGroup = function() {
-	return this.groups.pop();
-}
-
-Result.prototype.topGroup = function() {
-  return this.groups[this.groups.length - 1];
+Result.prototype.popGrouping = function() {
+	return this.groupings.pop();
 }
 
 var Operation = function() {
@@ -88,8 +78,7 @@ GenerateRowOperation.prototype.step = function(index) {
 }
 
 GenerateRowOperation.prototype.complete = function() {
-  var group = new Group(0);
-  var result = new Result(group);
+  var result = new Result();
   this.nextOperation.complete(result);
 }
 
@@ -180,22 +169,52 @@ SummarizeOperation.prototype.summarize = function(result) {
   if (summarizedGroup.groupName !== undefined) {
     values[summarizedGroup.groupName] = summarizedGroup.groupKey;    
   }
-  values[this.name] = this.expression.summarize(summarizedGroup);
+  
   var row = new Row(values, topGroup.groupIndex);
   this.nextOperation.step(row);
 }
 
 SummarizeOperation.prototype.complete = function(result) {
-  this.nextOperation.summarize(result);
-  this.nextOperation.complete();
+  var grouping = result.popGrouping();
+  var summaryName = this.name;
+  var values, row;
+  if (grouping !== undefined) {
+    var parents = grouping.parents;
+    var keys = grouping.keys;
+    var groupName = grouping.groupName;
+    var numberOfGroups = parents.length;
+    var key, parentGroupIndex, summary;
+    for (var i = 0; i < numberOfGroups; i++) {
+      key = keys[i];
+      parentGroupIndex = parents[i];
+      summary = this.expression.summarize(i);
+      values = {}
+      values[groupName] = key;
+      values[summaryName] = summary;
+      row = new Row(values, parentGroupIndex);
+      this.nextOperation.step(row);
+    }
+  } else {
+    // summary of entire dataframe
+    values = {};
+    values[this.name] = this.expression.summarize(0);
+    row = new Row(values, 0);
+    this.nextOperation.step(row);
+  }
+  this.nextOperation.complete(result);
+}
+
+var Grouping = function(groupName) {
+	this.groupName = groupName;
+	this.keys = [];
+  this.parents = [];
 }
 
 var GroupByOperation = function(name, exp) {
   ExpressionOperation.call(this, exp);
-  this.groupName = name;
+  this.grouping = new Grouping(name);
   this.groupMappings = [];
   this.numberOfGroups = 0;
-  this.parents = [];
   this.summarizer = nullOp;
 }
 GroupByOperation.prototype = Object.create(ExpressionOperation.prototype);
@@ -208,14 +227,15 @@ GroupByOperation.prototype.addState = function() {
 }
 
 GroupByOperation.prototype.execute = function(row) {
-  var value = this.expression.evaluate(row);
+  var key = this.expression.evaluate(row);
   var groupMap = this.groupMappings[row.groupIndex];
-  var newGroupIndex = groupMap.get(value);
+  var newGroupIndex = groupMap.get(key);
   if (newGroupIndex === undefined) {
-    groupMap.set(value, this.numberOfGroups);
+    groupMap.set(key, this.numberOfGroups);
     newGroupIndex = this.numberOfGroups;
-    this.parents.push(row.groupIndex);
     this.numberOfGroups++;
+    this.grouping.parents.push(row.groupIndex);
+    this.grouping.keys.push(key);
     this.nextOperation.addState();
   }
   row.groupIndex = newGroupIndex;
@@ -223,18 +243,8 @@ GroupByOperation.prototype.execute = function(row) {
 }
 
 GroupByOperation.prototype.complete = function(result) {
-  var topGroup = result.topGroup();
-  var groupMap = this.groupMappings[topGroup.groupIndex];
-  var groupKeys = groupMap.keys();
-  for (var key of groupKeys) {
-    var groupIndex = groupMap.get(key);
-    var groupName = this.groupName;
-    var groupKey = key;
-    var group = new Group(groupIndex, groupName, groupKey);
-    result.pushGroup(group);
-    this.nextOperation.summarize(result);
-  }
-  this.nextOperation.complete();
+  result.pushGrouping(this.grouping);
+  this.nextOperation.complete(result);
 }
 
 var Operations = {};

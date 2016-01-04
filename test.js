@@ -50,7 +50,7 @@ var top = new Topology(data);
 top.addGroupBy("party");
 top.addSummarize("total_pres_number", (row) => sum(row.pres_number));
 top.addTap((row) => console.log(row));
-top.addSummarize("real_total", (row) => sum(row.pres_number));
+top.addSummarize("real_total", (row) => sum(row.total_pres_number));
 top.addTap((row) => console.log(row));
 top.generate();
 top.execute();

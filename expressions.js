@@ -14,9 +14,9 @@ ExpressionManager.prototype.evaluate = function(expression, row) {
   return result;
 }
 
-ExpressionManager.prototype.summarize = function(expression, group) {
+ExpressionManager.prototype.summarize = function(expression, groupIndex) {
   this.handler = this.summarizer;
-  var result = this.handler.summarize(expression, group);
+  var result = this.handler.summarize(expression, groupIndex);
   this.handler = this.default;
   return result;
 }
@@ -70,11 +70,11 @@ var ExpressionSummarizer = function() {
     this._nextExpression = null;
 }
 
-ExpressionSummarizer.prototype.summarize = function(expression, group) {
+ExpressionSummarizer.prototype.summarize = function(expression, groupIndex) {
   // calculate result of a SummaryFunctionExpression
   this._nextExpression = expression.nextExpression;
-  this._groupIndex = group.groupIndex;
-  return expression.func(group);
+  this._groupIndex = groupIndex;
+  return expression.func({});
 }
 
 ExpressionSummarizer.prototype.get = function(expressionConstructor, arg) {
@@ -233,8 +233,8 @@ SummaryFunctionExpression.prototype.accumulate = function(row) {
   expManager.evaluate(this, row);
 }
 
-SummaryFunctionExpression.prototype.summarize = function(group) {
-  return expManager.summarize(this, group);
+SummaryFunctionExpression.prototype.summarize = function(groupIndex) {
+  return expManager.summarize(this, groupIndex);
 }
 
 var SquareExpression = function(arg) {
