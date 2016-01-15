@@ -56,7 +56,7 @@ var ExpressionEvaluator = function() {
 ExpressionEvaluator.prototype.evaluate = function(expression, row) {
   // evaluate a FunctionExpression
   this._nextExpression = expression.nextExpression;
-  this._groupIndex = row.groupIndex;
+  this._groupIndex = row._groupIndex;
   return expression.func(row);
 }
 
