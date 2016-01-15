@@ -1,3 +1,4 @@
+var DataFrame = require("./dataframe.js");
 var Expressions = require("./expressions.js");
 var Topology = require("./topology.js").Topology;
 
@@ -45,15 +46,22 @@ var data = [
 	}
 ];
 
-var top = new Topology(data);
+var columnNames = ["first_name", 
+				   "last_name", 
+				   "party", 
+				   "pres_number",
+				   "death_year",
+				   "inauguration_year",
+				   "last_year"];
 
-top.addGroupBy("party");
-top.addMutation("full_name", (row) => row.first_name + " " + row.last_name);
-top.addTap((row) => console.log(row));
-top.addSummarize("total_pres_number", (row) => sum(row.pres_number));
-top.addTap((row) => console.log(row));
-top.addSummarize("real_total", (row) => sum(row.total_pres_number));
-top.addTap((row) => console.log(row));
-top.generate();
-top.execute();
+var df = new DataFrame(data, columnNames);
+
+df.groupBy("party");
+df.mutate("full_name", (row) => row.first_name + " " + row.last_name);
+df.tap((row) => console.log(row));
+df.summarize("total_pres_number", (row) => sum(row.pres_number));
+df.tap((row) => console.log(row));
+df.summarize("real_total", (row) => sum(row.total_pres_number));
+df.tap((row) => console.log(row));
+df._execute();
 

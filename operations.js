@@ -2,10 +2,19 @@ var Expressions = require("./expressions.js");
 var FunctionExpression = Expressions.FunctionExpression;
 var nullExp = Expressions.nullExp;
 
-
-var Row = function(values, groupIndex) {
-  this.values = values;
-  this.groupIndex = groupIndex;
+var Row = function(df) {
+  var columns = this._columns = df._columns;
+  var columnNames = this._columnNames = df._columnNames;
+  this._index = 0;
+  this._groupIndex = 0;
+  var numColumns = df._numColumns;
+  for (var colIndex = 0; colIndex < numColumns; colIndex++) {
+    // use immediately invoked arrow expression to capture value of colIndex
+    var getter = ((c) => { return function() { return columns[c][this._index]; }; })(colIndex)
+    Object.defineProperty(this, columnNames[colIndex], {
+      get: getter
+    });
+  }
 }
 
 var Result = function() {
@@ -66,15 +75,18 @@ ExpressionOperation.prototype.addState = function() {
   this.nextOperation.addState();
 }
 
-var GenerateRowOperation = function(data) {
-  this.data = data;
+var GenerateRowOperation = function(dataframe) {
+  var numColumns = dataframe._numColumns;
+  var columnNames = dataframe._columnNames;
+  this.row = new Row(dataframe);
 }
+
 GenerateRowOperation.prototype = Object.create(Operation.prototype);
 GenerateRowOperation.prototype.constructor = GenerateRowOperation;
 
 GenerateRowOperation.prototype.step = function(index) {
-  var row = new Row(this.data[index], 0);
-  this.nextOperation.step(row);
+  this.row._index = index;
+  this.nextOperation.step(this.row);
 }
 
 GenerateRowOperation.prototype.complete = function() {
@@ -138,7 +150,7 @@ MutateOperation.prototype.constructor = MutateOperation;
 
 MutateOperation.prototype.execute = function(row) {
   var value = this.expression.evaluate(row);
-  row.values[this.name] = value;
+  row[this.name] = value;
   return row;
 }
 
@@ -170,7 +182,7 @@ SummarizeOperation.prototype.summarize = function(result) {
     values[summarizedGroup.groupName] = summarizedGroup.groupKey;    
   }
   
-  var row = new Row(values, topGroup.groupIndex);
+  var row = new Row(values, topGroup._groupIndex);
   this.nextOperation.step(row);
 }
 
@@ -228,17 +240,19 @@ GroupByOperation.prototype.addState = function() {
 
 GroupByOperation.prototype.execute = function(row) {
   var key = this.expression.evaluate(row);
-  var groupMap = this.groupMappings[row.groupIndex];
+  console.log("row", row);
+  console.log("mappings", this.groupMappings);
+  var groupMap = this.groupMappings[row._groupIndex];
   var newGroupIndex = groupMap.get(key);
   if (newGroupIndex === undefined) {
     groupMap.set(key, this.numberOfGroups);
     newGroupIndex = this.numberOfGroups;
     this.numberOfGroups++;
-    this.grouping.parents.push(row.groupIndex);
+    this.grouping.parents.push(row._groupIndex);
     this.grouping.keys.push(key);
     this.nextOperation.addState();
   }
-  row.groupIndex = newGroupIndex;
+  row._groupIndex = newGroupIndex;
   return row;
 }
 

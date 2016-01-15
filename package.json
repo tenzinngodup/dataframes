@@ -23,8 +23,6 @@
   },
   "homepage": "https://github.com/danrobinson/dataframes#readme",
   "dependencies": {
-    "esprima": "^2.7.0",
-    "rx": "^4.0.7",
-    "rxjs": "^5.0.0-alpha.10"
+    "cli-table": "^0.3.1"
   }
 }
