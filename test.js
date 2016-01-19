@@ -1,6 +1,5 @@
 var DataFrame = require("./dataframe.js");
 var Expressions = require("./expressions.js");
-var Topology = require("./topology.js").Topology;
 
 var square = Expressions.square;
 var sum = Expressions.sum;
@@ -54,14 +53,9 @@ var columnNames = ["first_name",
 				   "inauguration_year",
 				   "last_year"];
 
-var df = new DataFrame(data, columnNames);
-
-df.groupBy("party");
-df.mutate("full_name", (row) => row.first_name + " " + row.last_name);
-df.tap((row) => console.log(row));
-df.summarize("total_pres_number", (row) => sum(row.pres_number));
-df.tap((row) => console.log(row));
-df.summarize("real_total", (row) => sum(row.total_pres_number));
-df.tap((row) => console.log(row));
-df._execute();
+var df = new DataFrame({rows: data, columnNames: columnNames})
+	.filter(row => row.pres_number < 4)
+	.mutate("full_name", function(row) { return row.first_name + " " + row.last_name })
+	.summarize("total", row => sum(row.pres_number + 50));
+console.log(df);
 

@@ -45,7 +45,6 @@ ExpressionBuilder.prototype.get = function(expressionConstructor, arg) {
   var newExpression = new expressionConstructor();
   this._lastExpression.nextExpression = newExpression;
   this._lastExpression = newExpression;
-  console.log(newExpression);
   return newExpression.stubValue();
 }
 
@@ -56,8 +55,8 @@ var ExpressionEvaluator = function() {
 ExpressionEvaluator.prototype.evaluate = function(expression, row) {
   // evaluate a FunctionExpression
   this._nextExpression = expression.nextExpression;
-  this._groupIndex = row._groupIndex;
-  return expression.func(row);
+  this._groupIndex = row.grouping.index.value;
+  return expression.func(row.values);
 }
 
 ExpressionEvaluator.prototype.get = function(expressionConstructor, arg) {
@@ -78,7 +77,7 @@ ExpressionSummarizer.prototype.summarize = function(expression, groupIndex) {
 }
 
 ExpressionSummarizer.prototype.get = function(expressionConstructor, arg) {
-  var val = this._nextExpression.finalValue(arg, this._groupIndex);
+  var val = this._nextExpression.finalValue(this._groupIndex);
   this._nextExpression = this._nextExpression.nextExpression;
   return val;
 }
@@ -86,6 +85,7 @@ ExpressionSummarizer.prototype.get = function(expressionConstructor, arg) {
 var ExpressionDefault = function() {}
 
 ExpressionDefault.prototype.get = function(expressionConstructor, argument) {
+  a = b;
   throw "ExpressionDefault should not have been called"
 }
 
@@ -113,10 +113,6 @@ Expression.prototype.value = function() {
   return NaN;
 }
 
-Expression.prototype.finalValue = function() {
-  return NaN;
-}
-
 Expression.prototype.evaluate = function(value) {
   return value;
 }
@@ -125,7 +121,7 @@ Expression.prototype.getStatefulChain = function(chain) {
   return this.nextExpression.getStatefulChain();
 }
 
-Expression.prototype.finalValue = function(arg, groupIndex) {
+Expression.prototype.finalValue = function(groupIndex) {
   return NaN;
 }
 
@@ -163,7 +159,7 @@ StatefulExpression.prototype.evaluate = function(value, groupIndex) {
   return this.value(newState);
 }
 
-StatefulExpression.prototype.finalValue = function(arg, groupIndex) {
+StatefulExpression.prototype.finalValue = function(groupIndex) {
   return this.value(this.states[groupIndex])
 }
 

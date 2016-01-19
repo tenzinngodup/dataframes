@@ -1,20 +1,37 @@
 var Expressions = require("./expressions.js");
 var FunctionExpression = Expressions.FunctionExpression;
+var SummaryFunctionExpression = Expressions.SummaryFunctionExpression;
 var nullExp = Expressions.nullExp;
 
-var Row = function(df) {
-  var columns = this._columns = df._columns;
-  var columnNames = this._columnNames = df._columnNames;
-  this._index = 0;
-  this._groupIndex = 0;
-  var numColumns = df._numColumns;
-  for (var colIndex = 0; colIndex < numColumns; colIndex++) {
-    // use immediately invoked arrow expression to capture value of colIndex
-    var getter = ((c) => { return function() { return columns[c][this._index]; }; })(colIndex)
-    Object.defineProperty(this, columnNames[colIndex], {
-      get: getter
-    });
+var Index = function() {
+  this.value = 0;
+}
+
+var RowValues = function(propertyMap) {
+  for (var keyval of propertyMap) {
+    Object.defineProperty(this, keyval[0], keyval[1]);
   }
+}
+
+var Row = function(propertyMap, rowIndex, grouping) {
+  this.propertyMap = propertyMap;
+  this.rowIndex = rowIndex;
+  this.grouping = grouping;
+  this.values = new RowValues(propertyMap);
+}
+
+var Grouping = function(parentGrouping, groupName) {
+  this.parentGrouping = parentGrouping;
+  if (parentGrouping === null) {
+    this.groupName = null;
+    this.keys = null;
+    this.parents = null;
+  } else {
+    this.groupName = groupName;
+    this.keys = [];
+    this.parents = [];    
+  }
+  this.index = new Index();
 }
 
 var Result = function() {
@@ -41,6 +58,10 @@ Operation.prototype.setNextOperation = function(nextOperation) {
   this.nextOperation = nextOperation;
 }
 
+Operation.prototype.setup = function(row) {
+  this.nextOperation.setup(row);
+}
+
 Operation.prototype.step = function(row) {
   var row = this.execute(row);
   this.nextOperation.step(row);
@@ -54,12 +75,8 @@ Operation.prototype.execute = function(row) {
   return row;
 }
 
-Operation.prototype.summarize = function(row) {
-  this.nextOperation.summarize();
-}
-
-Operation.prototype.complete = function(result) {
-  this.nextOperation.complete(result);
+Operation.prototype.complete = function() {
+  return this.nextOperation.complete();
 }
 
 var ExpressionOperation = function(exp) {
@@ -75,200 +92,250 @@ ExpressionOperation.prototype.addState = function() {
   this.nextOperation.addState();
 }
 
-var GenerateRowOperation = function(dataframe) {
-  var numColumns = dataframe._numColumns;
-  var columnNames = dataframe._columnNames;
-  this.row = new Row(dataframe);
+var FunctionExpressionOperation = function(arg) {
+  var exp = arg;
+  if (typeof arg === "function") {
+    exp = new FunctionExpression(arg);
+  }
+  ExpressionOperation.call(this, exp);
 }
+FunctionExpressionOperation.prototype = Object.create(ExpressionOperation.prototype);
+FunctionExpressionOperation.prototype.constructor = FunctionExpressionOperation;
+
+var GenerateRowOperation = function() {}
 
 GenerateRowOperation.prototype = Object.create(Operation.prototype);
 GenerateRowOperation.prototype.constructor = GenerateRowOperation;
 
+GenerateRowOperation.prototype.generateProperty = function(column, rowIndex) {
+  var getter = function() { return column[rowIndex.value]; };
+  return { get: getter };
+}
+
+GenerateRowOperation.prototype.generatePropertyMap = function(columnMap, rowIndex) {
+  var propertyMap = new Map();
+  var column, columnName, prop;
+  for (var keyvalue of columnMap) {
+    columnName = keyvalue[0];
+    column = keyvalue[1];
+    prop = this.generateProperty(column, rowIndex);
+    propertyMap.set(columnName, prop);
+  }
+  return propertyMap;
+}
+
+GenerateRowOperation.prototype.setup = function(columnMap) {
+  this.rowIndex = new Index();
+  this.grouping = new Grouping(null);
+  this.groupIndex = this.grouping.index;
+  var propertyMap = this.generatePropertyMap(columnMap, this.rowIndex);
+  this.row = new Row(propertyMap, this.rowIndex, this.grouping);
+  this.nextOperation.setup(this.row);
+}
+
 GenerateRowOperation.prototype.step = function(index) {
-  this.row._index = index;
-  this.nextOperation.step(this.row);
+  this.rowIndex.value = index;
+  this.groupIndex.value = 0;
+  this.nextOperation.step();
 }
 
-GenerateRowOperation.prototype.complete = function() {
-  var result = new Result();
-  this.nextOperation.complete(result);
-}
-
-var NullOperation = function() {}
-NullOperation.prototype = Object.create(Operation.prototype);
-NullOperation.prototype.constructor = NullOperation;
-
-NullOperation.prototype.step = function(row) { return; }
-
-NullOperation.prototype.addState = function() { return; }
-
-NullOperation.prototype.summarize = function(result) { return; }
-
-NullOperation.prototype.complete = function(result) { return; }
-
-var nullOp = new NullOperation();
-
-var LogOperation = function() {}
-
-LogOperation.prototype = Object.create(Operation.prototype);
-LogOperation.prototype.constructor = LogOperation;
-
-LogOperation.prototype.execute = function(row) {
-  console.log("Logging row:", row);
-}
-
-var TapOperation = function(func) {
-  this.func = func;
-}
-
-TapOperation.prototype = Object.create(Operation.prototype);
-TapOperation.prototype.constructor = TapOperation;
-
-TapOperation.prototype.execute = function(row) {
-  this.func(row);
-  return row;
-}
-
-var FilterOperation = function(exp) {
-  ExpressionOperation.call(this, exp);
+var FilterOperation = function(arg) {
+  FunctionExpressionOperation.call(this, arg);
 }
 FilterOperation.prototype = Object.create(ExpressionOperation.prototype);
 FilterOperation.prototype.constructor = FilterOperation;
 
-FilterOperation.prototype.step = function(row) {
-  if (this.expression.evaluate(row)) {
-    this.nextOperation.step(row);
+FilterOperation.prototype.setup = function(row) {
+  this.row = row;
+  this.nextOperation.setup(row);
+}
+
+FilterOperation.prototype.step = function() {
+  if (this.expression.evaluate(this.row)) {
+    this.nextOperation.step();
   }
 }
 
-var MutateOperation = function(name, exp) {
-  ExpressionOperation.call(this, exp);
+var MutateOperation = function(name, arg) {
+  FunctionExpressionOperation.call(this, arg);
   this.name = name;
 }
 MutateOperation.prototype = Object.create(ExpressionOperation.prototype);
 MutateOperation.prototype.constructor = MutateOperation;
 
+MutateOperation.prototype.generateExpressionProperty = function(expression, row) {
+  var getter = function() { return expression.evaluate(row); };
+  return { get: getter };
+}
+
+MutateOperation.prototype.setup = function(row) {
+  var propertyMap = new Map(row.propertyMap);
+  var rowIndex = row.rowIndex;
+  var prop = this.generateExpressionProperty(this.expression, row);
+  propertyMap.set(this.name, prop);
+  this.row = new Row(propertyMap, rowIndex, row.grouping);
+  this.nextOperation.setup(this.row);
+}
+
 MutateOperation.prototype.execute = function(row) {
-  var value = this.expression.evaluate(row);
-  row[this.name] = value;
   return row;
 }
 
-var SummarizeOperation = function(name, exp) {
+var SummarizeOperation = function(name, arg) {
+  var exp = arg;
+  if (typeof arg === "function") {
+    exp = new SummaryFunctionExpression(arg);
+  }
   ExpressionOperation.call(this, exp);
   this.name = name;
 }
 SummarizeOperation.prototype = Object.create(ExpressionOperation.prototype);
 SummarizeOperation.prototype.constructor = SummarizeOperation;
 
+SummarizeOperation.prototype.generateKeyProperty = function(grouping) {
+  var groupIndex = grouping.index;
+  var keys = grouping.keys;
+  var getter = function() { return keys[groupIndex.value]; };
+  return { get: getter };
+}
+
+SummarizeOperation.prototype.generateSummaryProperty = function(expression, grouping) {
+  var groupIndex = grouping.index;
+  var getter = function() { return expression.summarize(groupIndex.value); };
+  return { get: getter };
+}
+
+SummarizeOperation.prototype.generatePropertyMap = function(grouping) {
+  var propertyMap = new Map();
+  var groupName = grouping.groupName;
+  if (groupName !== null) {
+    var keyProp = this.generateKeyProperty(grouping);
+    propertyMap.set(groupName, keyProp);
+  }
+  var summaryProp = this.generateSummaryProperty(this.expression, grouping);
+  propertyMap.set(this.name, summaryProp);
+  return propertyMap;
+}
+
+SummarizeOperation.prototype.setup = function(row) {
+  var grouping = row.grouping;
+  var parentGrouping = grouping.parentGrouping || grouping;
+  var propertyMap = this.generatePropertyMap(grouping);
+  var newRowIndex = grouping.index;
+  this.grouping = grouping;
+  this.oldRow = row;
+  this.nextRow = new Row(propertyMap, newRowIndex, parentGrouping);
+  this.nextOperation.setup(this.nextRow);
+}
+
 SummarizeOperation.prototype.addState = function() {
   this.statefulChain.addState();
   return;
 }
 
-SummarizeOperation.prototype.addRegroupedState = function() {
-  this.nextOperation.addState();
+SummarizeOperation.prototype.step = function() {
+  this.expression.accumulate(this.oldRow);
 }
 
-SummarizeOperation.prototype.step = function(row) {
-  this.expression.accumulate(row);
-}
-
-SummarizeOperation.prototype.summarize = function(result) {
-  var values = {}
-  var summarizedGroup = result.popGroup();
-  var topGroup = result.topGroup();
-  if (summarizedGroup.groupName !== undefined) {
-    values[summarizedGroup.groupName] = summarizedGroup.groupKey;    
-  }
-  
-  var row = new Row(values, topGroup._groupIndex);
-  this.nextOperation.step(row);
-}
-
-SummarizeOperation.prototype.complete = function(result) {
-  var grouping = result.popGrouping();
-  var summaryName = this.name;
-  var values, row;
-  if (grouping !== undefined) {
-    var parents = grouping.parents;
-    var keys = grouping.keys;
-    var groupName = grouping.groupName;
-    var numberOfGroups = parents.length;
-    var key, parentGroupIndex, summary;
-    for (var i = 0; i < numberOfGroups; i++) {
-      key = keys[i];
-      parentGroupIndex = parents[i];
-      summary = this.expression.summarize(i);
-      values = {}
-      values[groupName] = key;
-      values[summaryName] = summary;
-      row = new Row(values, parentGroupIndex);
-      this.nextOperation.step(row);
-    }
+SummarizeOperation.prototype.complete = function() {
+  var grouping = this.grouping;
+  // set up subsequent states
+  var parentGrouping = grouping.parentGrouping;
+  if (parentGrouping !== null && parentGrouping.parentGrouping !== null) {
+    for (var i = 0; i < numberOfParentGroups; i++) {
+      this.nextOperation.addState();
+    }      
   } else {
-    // summary of entire dataframe
-    values = {};
-    values[this.name] = this.expression.summarize(0);
-    row = new Row(values, 0);
-    this.nextOperation.step(row);
+    this.nextOperation.addState();
   }
-  this.nextOperation.complete(result);
+  var groupIndex = grouping.index;
+  var numberOfGroups = grouping.keys ? grouping.keys.length : 1;
+  for (var i = 0; i < numberOfGroups; i++) {
+    groupIndex.value = i;
+    this.nextOperation.step();  
+  }
+  return this.nextOperation.complete();
 }
 
-var Grouping = function(groupName) {
-	this.groupName = groupName;
-	this.keys = [];
-  this.parents = [];
-}
-
-var GroupByOperation = function(name, exp) {
-  ExpressionOperation.call(this, exp);
-  this.grouping = new Grouping(name);
+var GroupByOperation = function(name, arg) {
+  FunctionExpressionOperation.call(this, arg);
+  this.name = name;
   this.groupMappings = [];
-  this.numberOfGroups = 0;
-  this.summarizer = nullOp;
 }
 GroupByOperation.prototype = Object.create(ExpressionOperation.prototype);
 GroupByOperation.prototype.constructor = GroupByOperation;
 
+GroupByOperation.prototype.setup = function(row) {
+  this.oldRow = row;
+  this.grouping = new Grouping(row.grouping, this.name);
+  this.nextRow = new Row(row.propertyMap, row.rowIndex, this.grouping);
+  this.nextOperation.setup(this.nextRow);
+}
+
 GroupByOperation.prototype.addState = function() {
   this.statefulChain.addState();
-  this.summarizer.addRegroupedState();
   this.groupMappings.push(new Map());
 }
 
-GroupByOperation.prototype.execute = function(row) {
-  var key = this.expression.evaluate(row);
-  console.log("row", row);
-  console.log("mappings", this.groupMappings);
-  var groupMap = this.groupMappings[row._groupIndex];
-  var newGroupIndex = groupMap.get(key);
-  if (newGroupIndex === undefined) {
-    groupMap.set(key, this.numberOfGroups);
-    newGroupIndex = this.numberOfGroups;
-    this.numberOfGroups++;
-    this.grouping.parents.push(row._groupIndex);
-    this.grouping.keys.push(key);
+GroupByOperation.prototype.execute = function() {
+  var grouping = this.grouping;
+  var key = this.expression.evaluate(this.oldRow);
+  var parentGroupIndexValue = grouping.parentGrouping.index.value;
+  var groupMap = this.groupMappings[parentGroupIndexValue];
+  var newGroupIndexValue = groupMap.get(key);
+  if (newGroupIndexValue === undefined) {
+    newGroupIndexValue = grouping.keys.length;
+    groupMap.set(key, newGroupIndexValue);
+    grouping.parents.push(parentGroupIndexValue);
+    grouping.keys.push(key);
     this.nextOperation.addState();
   }
-  row._groupIndex = newGroupIndex;
-  return row;
+  grouping.index.value = newGroupIndexValue;
 }
 
-GroupByOperation.prototype.complete = function(result) {
-  result.pushGrouping(this.grouping);
-  this.nextOperation.complete(result);
+var Result = function(columnNames, columns) {
+  this.columnNames = columnNames;
+  this.columns = columns;
 }
+
+var NewDataFrameOperation = function() {}
+
+NewDataFrameOperation.prototype = Object.create(Operation.prototype);
+NewDataFrameOperation.prototype.constructor = NewDataFrameOperation;
+
+NewDataFrameOperation.prototype.setup = function(row) {
+  this.columnNames = Array.from(row.propertyMap.keys());
+  this.numberOfColumns = this.columnNames.length;
+  this.getters = Array.from(row.propertyMap.values()).map(function(prop) { return prop.get; });;
+  this.columns = this.columnNames.map(function() { return []; });
+  return;
+}
+
+NewDataFrameOperation.prototype.addState = function() {
+  return;
+}
+
+NewDataFrameOperation.prototype.step = function() {
+  var getter;
+  for (var colIndex = 0; colIndex < this.numberOfColumns; colIndex++) {
+    getter = this.getters[colIndex];
+    this.columns[colIndex].push(getter()); 
+  }
+}
+
+NewDataFrameOperation.prototype.complete = function() {
+  return new Result(this.columnNames, this.columns);
+}
+
+
+
 
 var Operations = {};
 Operations.FilterOperation = FilterOperation;
 Operations.MutateOperation = MutateOperation;
 Operations.GroupByOperation = GroupByOperation;
 Operations.SummarizeOperation = SummarizeOperation;
-Operations.NullOperation = NullOperation;
-Operations.LogOperation = LogOperation;
-Operations.TapOperation = TapOperation;
+Operations.NewDataFrameOperation = NewDataFrameOperation;
 Operations.GenerateRowOperation = GenerateRowOperation;
 
 module.exports = Operations;
