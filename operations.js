@@ -62,17 +62,12 @@ Operation.prototype.setup = function(row) {
   this.nextOperation.setup(row);
 }
 
-Operation.prototype.step = function(row) {
-  var row = this.execute(row);
-  this.nextOperation.step(row);
+Operation.prototype.step = function() {
+  this.nextOperation.step();
 }
 
 Operation.prototype.addState = function() {
   this.nextOperation.addState();
-}
-
-Operation.prototype.execute = function(row) {
-  return row;
 }
 
 Operation.prototype.complete = function() {
@@ -156,6 +151,114 @@ FilterOperation.prototype.step = function() {
   }
 }
 
+var Container = function() {
+  this.value = null;
+}
+
+var SelectOperation = function(arg) {
+  this.arg = arg;
+}
+SelectOperation.prototype = Object.create(Operation.prototype);
+SelectOperation.prototype.constructor = SelectOperation;
+
+SelectOperation.prototype.mapFromNames = function(row, names) {
+  var propertyMap = row.propertyMap;
+  var newPropertyMap = new Map();
+  var name, prop;
+  for (var i = 0; i < names.length; i++) {
+    name = names[i];
+    prop = propertyMap.get(name);
+    if (prop !== undefined) {
+      newPropertyMap.set(name, prop);
+    }
+  }
+  return newPropertyMap;
+}
+
+SelectOperation.prototype.mapFromObject = function(row, obj) {
+  var propertyMap = row.propertyMap;
+  var newPropertyMap = new Map();
+  var names = Object.keys(obj);
+  var name, prop;
+  for (var i = 0; i < names.length; i++) {
+    name = names[i];
+    prop = propertyMap.get(name);
+    if (prop !== undefined) {
+      newPropertyMap.set(obj[name], prop);
+    }
+  }
+  return newPropertyMap;
+}
+
+SelectOperation.prototype.mapFromRegex = function(row, re) {
+  var propertyMap = row.propertyMap;
+  var newPropertyMap = new Map();
+  var names = Array.from(propertyMap.keys());
+  var name, prop;
+  for (var i = 0; i < names.length; i++) {
+    name = names[i];
+    if (re.test(name)) {
+      prop = propertyMap.get(name);
+      newPropertyMap.set(name, prop);
+    }
+  }
+  return newPropertyMap;
+}
+
+SelectOperation.prototype.setup = function(row) {
+  var arg = this.arg;
+  var newPropertyMap;
+  if (typeof arg === "object") {
+    if (Array.isArray(arg)) {
+      newPropertyMap = this.mapFromNames(row, arg);
+    } else if (arg instanceof RegExp) {
+      newPropertyMap = this.mapFromRegex(row, arg);
+    } else {
+      newPropertyMap = this.mapFromObject(row, arg);
+    }
+  } else if (typeof arg === "string") {
+    newPropertyMap = new Map();
+    var prop = row.propertyMap.get(arg);
+    if (prop !== undefined) {
+      newPropertyMap.set(arg, prop);
+    }
+  }
+  var rowIndex = row.rowIndex;
+  this.row = new Row(newPropertyMap, rowIndex, row.grouping);
+  this.nextOperation.setup(this.row);
+}
+
+var RenameOperation = function(obj) {
+  if (typeof obj !== "object") {
+    throw "rename must be given an object.";
+  }
+  this.obj = obj;
+}
+RenameOperation.prototype = Object.create(Operation.prototype);
+RenameOperation.prototype.constructor = RenameOperation;
+
+RenameOperation.prototype.setup = function(row) {
+  var obj = this.obj;
+  var newPropertyMap;
+  var propertyMap = row.propertyMap;
+  var newPropertyMap = new Map();
+  var names = Array.from(propertyMap.keys());
+  var name, prop;
+  for (var keyvalue of propertyMap) {
+    var name = keyvalue[0];
+    var prop = keyvalue[1];
+    var newName = obj[name];
+    if (newName !== undefined) {
+      newPropertyMap.set(newName, prop);
+    } else {
+      newPropertyMap.set(name, prop);
+    }
+  }
+  var rowIndex = row.rowIndex;
+  this.row = new Row(newPropertyMap, rowIndex, row.grouping);
+  this.nextOperation.setup(this.row);
+}
+
 var MutateOperation = function(name, arg) {
   FunctionExpressionOperation.call(this, arg);
   this.name = name;
@@ -163,22 +266,25 @@ var MutateOperation = function(name, arg) {
 MutateOperation.prototype = Object.create(ExpressionOperation.prototype);
 MutateOperation.prototype.constructor = MutateOperation;
 
-MutateOperation.prototype.generateExpressionProperty = function(expression, row) {
-  var getter = function() { return expression.evaluate(row); };
+MutateOperation.prototype.generateContainerProperty = function(container, row) {
+  var getter = function() { return container.value; };
   return { get: getter };
 }
 
 MutateOperation.prototype.setup = function(row) {
   var propertyMap = new Map(row.propertyMap);
   var rowIndex = row.rowIndex;
-  var prop = this.generateExpressionProperty(this.expression, row);
+  var container = new Container();
+  var prop = this.generateContainerProperty(container, row);
   propertyMap.set(this.name, prop);
   this.row = new Row(propertyMap, rowIndex, row.grouping);
+  this.container = container;
   this.nextOperation.setup(this.row);
 }
 
-MutateOperation.prototype.execute = function(row) {
-  return row;
+MutateOperation.prototype.step = function() {
+  this.container.value = this.expression.evaluate(this.row);
+  this.nextOperation.step();
 }
 
 var SummarizeOperation = function(name, arg) {
@@ -277,7 +383,7 @@ GroupByOperation.prototype.addState = function() {
   this.groupMappings.push(new Map());
 }
 
-GroupByOperation.prototype.execute = function() {
+GroupByOperation.prototype.step = function() {
   var grouping = this.grouping;
   var key = this.expression.evaluate(this.oldRow);
   var parentGroupIndexValue = grouping.parentGrouping.index.value;
@@ -291,6 +397,7 @@ GroupByOperation.prototype.execute = function() {
     this.nextOperation.addState();
   }
   grouping.index.value = newGroupIndexValue;
+  this.nextOperation.step();
 }
 
 var Result = function(columnNames, columns) {
@@ -328,14 +435,14 @@ NewDataFrameOperation.prototype.complete = function() {
 }
 
 
-
-
 var Operations = {};
+Operations.SelectOperation = SelectOperation;
+Operations.RenameOperation = RenameOperation;
 Operations.FilterOperation = FilterOperation;
 Operations.MutateOperation = MutateOperation;
 Operations.GroupByOperation = GroupByOperation;
 Operations.SummarizeOperation = SummarizeOperation;
-Operations.NewDataFrameOperation = NewDataFrameOperation;
 Operations.GenerateRowOperation = GenerateRowOperation;
+Operations.NewDataFrameOperation = NewDataFrameOperation;
 
 module.exports = Operations;

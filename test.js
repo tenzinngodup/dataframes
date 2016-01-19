@@ -54,8 +54,8 @@ var columnNames = ["first_name",
 				   "last_year"];
 
 var df = new DataFrame({rows: data, columnNames: columnNames})
-	.filter(row => row.pres_number < 4)
-	.mutate("full_name", function(row) { return row.first_name + " " + row.last_name })
-	.summarize("total", row => sum(row.pres_number + 50));
+	.rename({"party": "political_party"})
+	.mutate("cumulative", function(row) { return cumsum(row.pres_number); })
+	.mutate("double_cumulative", function(row) { return cumsum(row.cumulative); });
 console.log(df);
 

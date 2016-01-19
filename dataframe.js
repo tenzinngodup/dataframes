@@ -1,6 +1,8 @@
 var Operations = require("./operations.js");
 var Expressions = require("./expressions.js");
 
+var SelectOperation = Operations.SelectOperation;
+var RenameOperation = Operations.RenameOperation;
 var FilterOperation = Operations.FilterOperation;
 var MutateOperation = Operations.MutateOperation;
 var NewDataFrameOperation = Operations.NewDataFrameOperation;
@@ -14,6 +16,16 @@ var SummaryFunctionExpression = Expressions.SummaryFunctionExpression;
 var LazyDataFrame = function(previous, step) {
   this._previous = previous;
   this._step = step;
+}
+
+LazyDataFrame.prototype.select = function(arg) {
+  var step = new Step(SelectOperation, [arg]);
+  return new LazyDataFrame(this, step);
+}
+
+LazyDataFrame.prototype.rename = function(obj) {
+  var step = new Step(RenameOperation, [obj]);
+  return new LazyDataFrame(this, step);
 }
 
 LazyDataFrame.prototype.filter = function(func) {
