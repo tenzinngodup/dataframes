@@ -1,443 +1,626 @@
+"use strict";
+
 var Expressions = require("./expressions.js");
 var FunctionExpression = Expressions.FunctionExpression;
 var SummaryFunctionExpression = Expressions.SummaryFunctionExpression;
 var nullExp = Expressions.nullExp;
 
-var Index = function() {
-  this.value = 0;
-}
+class Index {
+  constructor() {
+    this.value = 0;
+  }
 
-var RowValues = function(propertyMap) {
-  for (var keyval of propertyMap) {
-    Object.defineProperty(this, keyval[0], keyval[1]);
+  set(value) {
+    this.value = value;
   }
 }
 
-var Row = function(propertyMap, rowIndex, grouping) {
-  this.propertyMap = propertyMap;
-  this.rowIndex = rowIndex;
-  this.grouping = grouping;
-  this.values = new RowValues(propertyMap);
-}
-
-var Grouping = function(parentGrouping, groupName) {
-  this.parentGrouping = parentGrouping;
-  if (parentGrouping === null) {
-    this.groupName = null;
-    this.keys = null;
-    this.parents = null;
-  } else {
-    this.groupName = groupName;
-    this.keys = [];
-    this.parents = [];    
+class SubIndex extends Index {
+  constructor(parentIndex) {
+    super();
+    this.parentIndex = parentIndex;
+    this.parentIndexValues = [];
   }
-  this.index = new Index();
-}
 
-var Result = function() {
-	this.groupings = [];
-}
-
-Result.prototype.pushGrouping = function(grouping) {
-	this.groupings.push(grouping);
-}
-
-Result.prototype.popGrouping = function() {
-	return this.groupings.pop();
-}
-
-var Operation = function() {
-  this.nextOperation = null;
-}
-
-Operation.prototype.init = function() {
-  return null;
-}
-
-Operation.prototype.setNextOperation = function(nextOperation) {
-  this.nextOperation = nextOperation;
-}
-
-Operation.prototype.setup = function(row) {
-  this.nextOperation.setup(row);
-}
-
-Operation.prototype.step = function() {
-  this.nextOperation.step();
-}
-
-Operation.prototype.addState = function() {
-  this.nextOperation.addState();
-}
-
-Operation.prototype.complete = function() {
-  return this.nextOperation.complete();
-}
-
-var ExpressionOperation = function(exp) {
-  this.expression = exp;
-  this.statefulChain = exp.getStatefulChain();
-  Operation.call(this);
-}
-ExpressionOperation.prototype = Object.create(Operation.prototype);
-ExpressionOperation.prototype.constructor = ExpressionOperation;
-
-ExpressionOperation.prototype.addState = function() {
-  this.statefulChain.addState();
-  this.nextOperation.addState();
-}
-
-var FunctionExpressionOperation = function(arg) {
-  var exp = arg;
-  if (typeof arg === "function") {
-    exp = new FunctionExpression(arg);
+  set(value) {
+    this.value = value;
+    var parentIndexValue = this.parentIndexValues[value];
+    this.parentIndex.set(parentIndexValue);
   }
-  ExpressionOperation.call(this, exp);
-}
-FunctionExpressionOperation.prototype = Object.create(ExpressionOperation.prototype);
-FunctionExpressionOperation.prototype.constructor = FunctionExpressionOperation;
 
-var GenerateRowOperation = function() {}
-
-GenerateRowOperation.prototype = Object.create(Operation.prototype);
-GenerateRowOperation.prototype.constructor = GenerateRowOperation;
-
-GenerateRowOperation.prototype.generateProperty = function(column, rowIndex) {
-  var getter = function() { return column[rowIndex.value]; };
-  return { get: getter };
-}
-
-GenerateRowOperation.prototype.generatePropertyMap = function(columnMap, rowIndex) {
-  var propertyMap = new Map();
-  var column, columnName, prop;
-  for (var keyvalue of columnMap) {
-    columnName = keyvalue[0];
-    column = keyvalue[1];
-    prop = this.generateProperty(column, rowIndex);
-    propertyMap.set(columnName, prop);
+  add() {
+    var parentIndexValue = this.parentIndexValues[value];
+    this.value = this.parentIndexValues.push(parentIndexValue) - 1;
   }
-  return propertyMap;
+
+  numberOfRows() {
+    return this.parentIndexValues.length;
+  }
 }
 
-GenerateRowOperation.prototype.setup = function(columnMap) {
-  this.rowIndex = new Index();
-  this.grouping = new Grouping(null);
-  this.groupIndex = this.grouping.index;
-  var propertyMap = this.generatePropertyMap(columnMap, this.rowIndex);
-  this.row = new Row(propertyMap, this.rowIndex, this.grouping);
-  this.nextOperation.setup(this.row);
+class Container {
+  constructor() {
+    this.value = NaN;
+  }
 }
 
-GenerateRowOperation.prototype.step = function(index) {
-  this.rowIndex.value = index;
-  this.groupIndex.value = 0;
-  this.nextOperation.step();
+class Property {
+  constructor(descriptor) {
+    this.descriptor = descriptor;
+  }
 }
 
-var FilterOperation = function(arg) {
-  FunctionExpressionOperation.call(this, arg);
-}
-FilterOperation.prototype = Object.create(ExpressionOperation.prototype);
-FilterOperation.prototype.constructor = FilterOperation;
-
-FilterOperation.prototype.setup = function(row) {
-  this.row = row;
-  this.nextOperation.setup(row);
+class ContainerProperty extends Property {
+  constructor(container) {
+    var getter = function() { return container.value; };
+    var descriptor = { get: getter };
+    super(descriptor);
+    this.container = container;
+  }
 }
 
-FilterOperation.prototype.step = function() {
-  if (this.expression.evaluate(this.row)) {
+class IndexedProperty extends Property {
+  constructor(index, values) {
+    var getter = function() { return values[index.value]; };
+    var descriptor = { get: getter };
+    super(descriptor);
+    this.values = values;
+    this.index = index;
+  }
+}
+
+class RowValues {
+  constructor(propertyMap) {
+    for (var keyval of propertyMap) {
+      var name = keyval[0];
+      var prop = keyval[1];
+      Object.defineProperty(this, name, prop.descriptor);
+    }
+  }
+}
+
+class StubValues {
+  constructor(columnNames) {
+    for (var columnName of columnNames) {
+      var descriptor = { get: this.getGetter(columnName) };
+      Object.defineProperty(this, columnName, descriptor);
+    }
+    this.requirements = new Set();
+  }
+
+  getGetter(name) {
+    return () => { this.requirements.add(name); return NaN; };
+  }
+}
+
+class Row {
+  constructor(rowIndex, propertyMap, grouping) {
+    this.rowIndex = rowIndex;
+    this.propertyMap = propertyMap;
+    this.grouping = grouping;
+    this.values = new RowValues(propertyMap);
+  }
+}
+
+class Grouping {
+  constructor(parentGrouping, groupName) {
+    this.parentGrouping = parentGrouping;
+    if (parentGrouping === null) {
+      this.groupName = null;
+      this.keys = null;
+      this.parents = null;
+    } else {
+      this.groupName = groupName;
+      this.keys = [];
+      this.parents = [];
+    }
+    this.index = new Index();
+  }
+}
+
+class Operation {
+  constructor() {
+    this.nextOperation = null;
+    this.oldRow = null;
+    this.newRow = null;
+  }
+
+  setNextOperation(nextOperation) {
+    this.nextOperation = nextOperation;
+  }
+
+  setup(row) {
+    this.oldRow = row;
+    this.newRow = this.setupRow(row);
+    var subsequentRequirements = this.nextOperation.setup(this.newRow);
+    var requirements = this.setupRequirements(subsequentRequirements, this.oldRow);
+    return requirements;
+  }
+
+  setupRequirements(subsequentRequirements) {
+    return subsequentRequirements;
+  }
+
+  checkRequirements(stub) {
+    return this.nextOperation.checkRequirements(stub);
+  }
+
+  setupRow(row) {
+    var rowIndex = this.setupRowIndex(row);
+    var propertyMap = this.setupPropertyMap(row);
+    var grouping = this.setupGrouping(row);
+    return new Row(rowIndex, propertyMap, grouping);
+  }
+
+  setupRowIndex(row) {
+    return row.rowIndex;
+  }
+
+  setupPropertyMap(row) {
+    return row.propertyMap;
+  }
+
+  setupGrouping(row) {
+    return row.grouping;
+  }
+
+  step() {
+    this.nextOperation.step();
+  }
+
+  addState() {
+    this.nextOperation.addState();
+  }
+
+  complete() {
+    return this.nextOperation.complete();
+  }
+}
+
+class GenerateRowOperation extends Operation {
+  setupPropertyMap(columnMap, rowIndex) {
+    var propertyMap = new Map();
+    var column, columnName, prop;
+    for (var keyvalue of columnMap) {
+      columnName = keyvalue[0];
+      column = keyvalue[1];
+      prop = new IndexedProperty(rowIndex, column);
+      propertyMap.set(columnName, prop);
+    }
+    return propertyMap;
+  }
+
+  checkRequirements(columnMap) {
+    var columnSet = Set(columnMap.keys());
+    this.nextOperation.checkRequirements(columnSet);
+  }
+
+  setup(columnMap) {
+    var rowIndex = new Index();
+    var grouping = new Grouping(null);
+    var propertyMap = this.setupPropertyMap(columnMap, rowIndex);
+    var newRow = new Row(rowIndex, propertyMap, grouping);
+    this.rowIndex = rowIndex;
+    this.groupIndex = grouping.index;
+    return this.nextOperation.setup(newRow);
+  }
+
+  step(index) {
+    this.rowIndex.value = index;
+    this.groupIndex.value = 0;
     this.nextOperation.step();
   }
 }
 
-var Container = function() {
-  this.value = null;
+class ReIndexer {
+  constructor(container, values) {
+    this.container = container;
+    this.values = values;
+  }
+
+  add() {
+    this.values.push(container.value);
+  }
 }
 
-var SelectOperation = function(arg) {
-  this.arg = arg;
-}
-SelectOperation.prototype = Object.create(Operation.prototype);
-SelectOperation.prototype.constructor = SelectOperation;
+class EvaluateOperation extends Operation {
+  constructor(arg, container) {
+    super();
+    var exp = arg;
+    if (typeof arg === "function") {
+      exp = new FunctionExpression(arg);
+    }
+    this.expression = exp;
+    this.container = container;
+  }
 
-SelectOperation.prototype.mapFromNames = function(row, names) {
-  var propertyMap = row.propertyMap;
-  var newPropertyMap = new Map();
-  var name, prop;
-  for (var i = 0; i < names.length; i++) {
-    name = names[i];
-    prop = propertyMap.get(name);
-    if (prop !== undefined) {
+  checkRequirements(columnSet) {
+    var stub = new StubValues(columnSet);
+    var subsequentRequirements = this.nextOperation.checkRequirements(columnSet);
+    var expressionRequirements = this.expression.requirements(stub);
+    for (var req of expressionRequirements) {
+      subsequentRequirements.add(req);
+    }
+    return subsequentRequirements;
+  }
+
+  step() {
+    this.container.value = this.expression.evaluate(this.row);
+    this.nextOperation.step();
+  }
+
+  addState() {
+    this.expression.addState();
+    this.nextOperation.addState();
+  }
+
+}
+
+class SummaryEvaluateOperation extends Operation {
+
+}
+
+class ExpressionOperation extends Operation {
+  constructor(container) {
+    super();
+    this.container = container;
+  }
+}
+
+class FilterOperation extends ExpressionOperation {
+  step() {
+    if (this.container.value) {
+      this.nextOperation.step();
+    }
+  }
+}
+
+class SelectOperation extends Operation {
+  constructor(arg) {
+    super();
+    this.arg = arg;
+  }
+
+  setupPropertyMap(oldPropertyMap) {
+    var names = this.getNames(oldPropertyMap);
+    var newPropertyMap = new Map();
+    var name, prop;
+    for (var i = 0; i < names.length; i++) {
+      name = names[i];
+      prop = oldPropertyMap.get(name);
       newPropertyMap.set(name, prop);
     }
+    return newPropertyMap;
   }
-  return newPropertyMap;
+
+  getNames(oldPropertyMap) {
+    var arg = this.arg;
+    var names;
+    if (typeof arg === "object") {
+      if (Array.isArray(arg)) {
+        names = arg.filter((name) => oldPropertyMap.has(name));
+      } else if (arg instanceof RegExp) {
+        var oldNames = Array.from(oldPropertyMap.keys());
+        names = oldNames.filter((name) => arg.test(name));
+      } else {
+        // the SelectOperation just drops the columns
+        // renaming is done in a subsequent RenameOperation
+        var objectKeys = Object.keys(arg);
+        names = objectKeys.filter((name) => oldPropertyMap.has(name));
+      }
+    } else if (typeof arg === "string") {
+      names = [arg];
+    }
+    return names;
+  }
 }
 
-SelectOperation.prototype.mapFromObject = function(row, obj) {
-  var propertyMap = row.propertyMap;
-  var newPropertyMap = new Map();
-  var names = Object.keys(obj);
-  var name, prop;
-  for (var i = 0; i < names.length; i++) {
-    name = names[i];
-    prop = propertyMap.get(name);
-    if (prop !== undefined) {
-      newPropertyMap.set(obj[name], prop);
+class RenameOperation extends Operation {
+  constructor(obj) {
+    super();
+    if (typeof obj !== "object") {
+      throw "rename() must be given an object.";
+    }
+    this.obj = obj;
+  }
+
+  setupPropertyMap(row) {
+    var obj = this.obj;
+    var newPropertyMap = new Map();
+    var inverseNameMap = new Map();
+    var oldNames = Object.keys(obj);
+    var oldName, newName, prop;
+    for (var i = 0; i < oldNames.length; i++) {
+      oldName = oldNames[i];
+      prop = propertyMap.get(oldName);
+      if (prop !== undefined) {
+        newName = obj[oldName];
+        newPropertyMap.set(newName, prop);
+        inverseNameMap.set(newName, oldName);
+      }
+    }
+    this.inverseNameMap = inverseNameMap;
+    return newPropertyMap;
+  }
+
+  setupRequirements(subsequentRequirements) {
+    var requirements = new Set();
+    var inverseNameMap = this.inverseNameMap;
+    for (var newName of subsequentRequirements) {
+      requirements.add(inverseNameMap.get(newName) || newName);
+    }
+    return requirements;
+  }
+
+}
+
+class SliceOperation extends Operation {
+  constructor(begin, end) {
+    super();
+    this.begin = begin;
+    this.end = (end !== undefined) ? end : Infinity;
+    this.states = [];
+  }
+
+  setupGrouping(row) {
+    this.groupIndex = row.grouping.index;
+    return row.grouping;
+  }
+
+  addState() {
+    this.states.push(0);
+    this.nextOperation.addState();
+  }
+
+  step() {
+    var groupIndexValue = this.groupIndex.value;
+    var position = this.states[groupIndexValue];
+    if (position >= this.begin && position < this.end) {
+      this.nextOperation.step();
+    }
+    this.states[groupIndexValue]++;
+  }
+}
+
+class ReIndexOperation extends Operation {
+  constructor() {
+    super();
+    this.subIndex = null;
+  }
+
+  setupRowIndex(row) {
+    this.subIndex = new SubIndex(row.rowIndex);
+    return this.subIndex;
+  }
+
+  step() {
+    this.subIndex.add();
+  }
+}
+
+class PropertyReIndexOperation extends ReIndexOperation {
+  constructor() {
+    super();
+    this.reIndexerMap = new Map();
+    this.reIndexers = [];
+  }
+
+  setupPropertyMap(row) {
+    var subIndex = this.subIndex;
+    var propertyMap = row.propertyMap;
+    var newPropertyMap = new Map();
+    var prop, name;
+    for (var keyvalue of propertyMap) {
+      name = keyvalue[0];
+      prop = keyvalue[1];
+      if (prop.container) {
+        var values = [];
+        var reIndexer = new ReIndexer(prop.container, values);
+        var reIndexedProp = new IndexedProperty(subIndex, values);
+        newPropertyMap.set(name, reIndexedProp);
+        this.reIndexerMap.set(name, reIndexer);
+      } else {
+        newPropertyMap.set(name, prop);
+      }
+    }
+    return newPropertyMap;
+  }
+
+  setupRequirements(subsequentRequirements) {
+    for (var keyvalue of reIndexerMap) {
+      var name = keyvalue[0];
+      var reIndexer;
+      if (subsequentRequirements.has(name)) {
+        reIndexer = keyvalue[1];
+        this.reIndexers.push(reIndexer);
+      }
+    }
+    return subsequentRequirements;
+  }
+
+  step() {
+    super.step();
+    var reIndexer;
+    for (var i = 0; i < this.reIndexers.length; i++) {
+      reIndexer = this.reIndexers[i];
+      reIndexer.add();
     }
   }
-  return newPropertyMap;
 }
 
-SelectOperation.prototype.mapFromRegex = function(row, re) {
-  var propertyMap = row.propertyMap;
-  var newPropertyMap = new Map();
-  var names = Array.from(propertyMap.keys());
-  var name, prop;
-  for (var i = 0; i < names.length; i++) {
-    name = names[i];
-    if (re.test(name)) {
-      prop = propertyMap.get(name);
-      newPropertyMap.set(name, prop);
-    }
+class MutateOperation extends ExpressionOperation {
+  constructor(container, name) {
+    super(container);
+    this.name = name;
   }
-  return newPropertyMap;
+
+  setupPropertyMap(row) {
+    var propertyMap = new Map(row.propertyMap);
+    var prop = new ContainerProperty(this.container);
+    propertyMap.set(this.name, prop);
+    return propertyMap;
+  }
+
+  setupRequirements(subsequentRequirements, row) {
+    subsequentRequirements.delete(this.name);
+    return super.setupRequirements(subsequentRequirements, row);
+  }
 }
 
-SelectOperation.prototype.setup = function(row) {
-  var arg = this.arg;
-  var newPropertyMap;
-  if (typeof arg === "object") {
-    if (Array.isArray(arg)) {
-      newPropertyMap = this.mapFromNames(row, arg);
-    } else if (arg instanceof RegExp) {
-      newPropertyMap = this.mapFromRegex(row, arg);
+class AccumulateOperation extends Operation {
+  constructor(arg) {
+    super();
+    var exp = arg;
+    if (typeof arg === "function") {
+      exp = new SummaryFunctionExpression(arg);
+    }
+    this.expression = exp;
+  }
+
+  step() {
+    this.expression.evalute(this.row);
+  }
+}
+
+class SummarizeOperation extends Operation {
+  constructor() {
+    super();
+    this.container = new Container();
+  }
+
+  setupPropertyMap(row) {
+    var propertyMap = new Map();
+    var grouping = row.grouping;
+    var groupName = grouping.groupName;
+    if (groupName !== null) {
+      var keyProp = new ContainerProperty(this.container);
+      propertyMap.set(groupName, keyProp);
+    }
+    return propertyMap;
+  }
+
+  setupRowIndex(row) {
+    return row.grouping.groupIndex;
+  }
+
+  setupGrouping(row) {
+    var grouping = row.grouping;
+    var parentGrouping = grouping.parentGrouping || grouping;
+    return parentGrouping;
+  }
+
+  addState() {
+    return;
+  }
+
+  step() {
+    return;
+  }
+
+  complete() {
+    var oldGrouping = this.oldRow.grouping;
+    // set up subsequent states
+    var newGrouping = this.newRow.grouping;
+    if (newGrouping !== null && newGrouping.parentGrouping !== null) {
+      var numberOfNewGroups = newGrouping.keys.length;
+      for (var i = 0; i < numberOfParentGroups; i++) {
+        this.nextOperation.addState();
+      }
     } else {
-      newPropertyMap = this.mapFromObject(row, arg);
-    }
-  } else if (typeof arg === "string") {
-    newPropertyMap = new Map();
-    var prop = row.propertyMap.get(arg);
-    if (prop !== undefined) {
-      newPropertyMap.set(arg, prop);
-    }
-  }
-  var rowIndex = row.rowIndex;
-  this.row = new Row(newPropertyMap, rowIndex, row.grouping);
-  this.nextOperation.setup(this.row);
-}
-
-var RenameOperation = function(obj) {
-  if (typeof obj !== "object") {
-    throw "rename must be given an object.";
-  }
-  this.obj = obj;
-}
-RenameOperation.prototype = Object.create(Operation.prototype);
-RenameOperation.prototype.constructor = RenameOperation;
-
-RenameOperation.prototype.setup = function(row) {
-  var obj = this.obj;
-  var newPropertyMap;
-  var propertyMap = row.propertyMap;
-  var newPropertyMap = new Map();
-  var names = Array.from(propertyMap.keys());
-  var name, prop;
-  for (var keyvalue of propertyMap) {
-    var name = keyvalue[0];
-    var prop = keyvalue[1];
-    var newName = obj[name];
-    if (newName !== undefined) {
-      newPropertyMap.set(newName, prop);
-    } else {
-      newPropertyMap.set(name, prop);
-    }
-  }
-  var rowIndex = row.rowIndex;
-  this.row = new Row(newPropertyMap, rowIndex, row.grouping);
-  this.nextOperation.setup(this.row);
-}
-
-var MutateOperation = function(name, arg) {
-  FunctionExpressionOperation.call(this, arg);
-  this.name = name;
-}
-MutateOperation.prototype = Object.create(ExpressionOperation.prototype);
-MutateOperation.prototype.constructor = MutateOperation;
-
-MutateOperation.prototype.generateContainerProperty = function(container, row) {
-  var getter = function() { return container.value; };
-  return { get: getter };
-}
-
-MutateOperation.prototype.setup = function(row) {
-  var propertyMap = new Map(row.propertyMap);
-  var rowIndex = row.rowIndex;
-  var container = new Container();
-  var prop = this.generateContainerProperty(container, row);
-  propertyMap.set(this.name, prop);
-  this.row = new Row(propertyMap, rowIndex, row.grouping);
-  this.container = container;
-  this.nextOperation.setup(this.row);
-}
-
-MutateOperation.prototype.step = function() {
-  this.container.value = this.expression.evaluate(this.row);
-  this.nextOperation.step();
-}
-
-var SummarizeOperation = function(name, arg) {
-  var exp = arg;
-  if (typeof arg === "function") {
-    exp = new SummaryFunctionExpression(arg);
-  }
-  ExpressionOperation.call(this, exp);
-  this.name = name;
-}
-SummarizeOperation.prototype = Object.create(ExpressionOperation.prototype);
-SummarizeOperation.prototype.constructor = SummarizeOperation;
-
-SummarizeOperation.prototype.generateKeyProperty = function(grouping) {
-  var groupIndex = grouping.index;
-  var keys = grouping.keys;
-  var getter = function() { return keys[groupIndex.value]; };
-  return { get: getter };
-}
-
-SummarizeOperation.prototype.generateSummaryProperty = function(expression, grouping) {
-  var groupIndex = grouping.index;
-  var getter = function() { return expression.summarize(groupIndex.value); };
-  return { get: getter };
-}
-
-SummarizeOperation.prototype.generatePropertyMap = function(grouping) {
-  var propertyMap = new Map();
-  var groupName = grouping.groupName;
-  if (groupName !== null) {
-    var keyProp = this.generateKeyProperty(grouping);
-    propertyMap.set(groupName, keyProp);
-  }
-  var summaryProp = this.generateSummaryProperty(this.expression, grouping);
-  propertyMap.set(this.name, summaryProp);
-  return propertyMap;
-}
-
-SummarizeOperation.prototype.setup = function(row) {
-  var grouping = row.grouping;
-  var parentGrouping = grouping.parentGrouping || grouping;
-  var propertyMap = this.generatePropertyMap(grouping);
-  var newRowIndex = grouping.index;
-  this.grouping = grouping;
-  this.oldRow = row;
-  this.nextRow = new Row(propertyMap, newRowIndex, parentGrouping);
-  this.nextOperation.setup(this.nextRow);
-}
-
-SummarizeOperation.prototype.addState = function() {
-  this.statefulChain.addState();
-  return;
-}
-
-SummarizeOperation.prototype.step = function() {
-  this.expression.accumulate(this.oldRow);
-}
-
-SummarizeOperation.prototype.complete = function() {
-  var grouping = this.grouping;
-  // set up subsequent states
-  var parentGrouping = grouping.parentGrouping;
-  if (parentGrouping !== null && parentGrouping.parentGrouping !== null) {
-    for (var i = 0; i < numberOfParentGroups; i++) {
       this.nextOperation.addState();
-    }      
-  } else {
-    this.nextOperation.addState();
-  }
-  var groupIndex = grouping.index;
-  var numberOfGroups = grouping.keys ? grouping.keys.length : 1;
-  for (var i = 0; i < numberOfGroups; i++) {
-    groupIndex.value = i;
-    this.nextOperation.step();  
-  }
-  return this.nextOperation.complete();
-}
-
-var GroupByOperation = function(name, arg) {
-  FunctionExpressionOperation.call(this, arg);
-  this.name = name;
-  this.groupMappings = [];
-}
-GroupByOperation.prototype = Object.create(ExpressionOperation.prototype);
-GroupByOperation.prototype.constructor = GroupByOperation;
-
-GroupByOperation.prototype.setup = function(row) {
-  this.oldRow = row;
-  this.grouping = new Grouping(row.grouping, this.name);
-  this.nextRow = new Row(row.propertyMap, row.rowIndex, this.grouping);
-  this.nextOperation.setup(this.nextRow);
-}
-
-GroupByOperation.prototype.addState = function() {
-  this.statefulChain.addState();
-  this.groupMappings.push(new Map());
-}
-
-GroupByOperation.prototype.step = function() {
-  var grouping = this.grouping;
-  var key = this.expression.evaluate(this.oldRow);
-  var parentGroupIndexValue = grouping.parentGrouping.index.value;
-  var groupMap = this.groupMappings[parentGroupIndexValue];
-  var newGroupIndexValue = groupMap.get(key);
-  if (newGroupIndexValue === undefined) {
-    newGroupIndexValue = grouping.keys.length;
-    groupMap.set(key, newGroupIndexValue);
-    grouping.parents.push(parentGroupIndexValue);
-    grouping.keys.push(key);
-    this.nextOperation.addState();
-  }
-  grouping.index.value = newGroupIndexValue;
-  this.nextOperation.step();
-}
-
-var Result = function(columnNames, columns) {
-  this.columnNames = columnNames;
-  this.columns = columns;
-}
-
-var NewDataFrameOperation = function() {}
-
-NewDataFrameOperation.prototype = Object.create(Operation.prototype);
-NewDataFrameOperation.prototype.constructor = NewDataFrameOperation;
-
-NewDataFrameOperation.prototype.setup = function(row) {
-  this.columnNames = Array.from(row.propertyMap.keys());
-  this.numberOfColumns = this.columnNames.length;
-  this.getters = Array.from(row.propertyMap.values()).map(function(prop) { return prop.get; });;
-  this.columns = this.columnNames.map(function() { return []; });
-  return;
-}
-
-NewDataFrameOperation.prototype.addState = function() {
-  return;
-}
-
-NewDataFrameOperation.prototype.step = function() {
-  var getter;
-  for (var colIndex = 0; colIndex < this.numberOfColumns; colIndex++) {
-    getter = this.getters[colIndex];
-    this.columns[colIndex].push(getter()); 
+    }
+    var groupIndex = oldGrouping.index;
+    var keys = oldGrouping.keys;
+    var numberOfGroups = oldGrouping.keys ? oldGrouping.keys.length : 1;
+    if (keys) {
+      for (var i = 0; i < numberOfGroups; i++) {
+        groupIndex.value = i;
+        this.container.value = keys[i];
+        this.nextOperation.step();
+      }
+    } else {
+      groupIndex.value = 0;
+      this.nextOperation.step();
+    }
+    return this.nextOperation.complete();
   }
 }
 
-NewDataFrameOperation.prototype.complete = function() {
-  return new Result(this.columnNames, this.columns);
+class GroupByOperation extends ExpressionOperation {
+  constructor(container, name) {
+    super(container);
+    this.name = name;
+    this.groupMappings = [];
+    this.grouping = null;
+  }
+
+  setupGrouping(row) {
+    return new Grouping(row.grouping, this.name);
+  }
+
+  addState() {
+    this.groupMappings.push(new Map());
+  }
+
+  step() {
+    var grouping = this.newRow.grouping;
+    var key = this.container.value;
+    var parentGroupIndexValue = grouping.parentGrouping.index.value;
+    var groupMap = this.groupMappings[parentGroupIndexValue];
+    var newGroupIndexValue = groupMap.get(key);
+    if (newGroupIndexValue === undefined) {
+      newGroupIndexValue = grouping.keys.length;
+      groupMap.set(key, newGroupIndexValue);
+      grouping.parents.push(parentGroupIndexValue);
+      grouping.keys.push(key);
+      this.nextOperation.addState();
+    }
+    grouping.index.value = newGroupIndexValue;
+    this.nextOperation.step();
+  }
 }
 
+class NewDataFrameOperation extends Operation {
+  setup(row) {
+    this.columnNames = Array.from(row.propertyMap.keys());
+    this.numberOfColumns = this.columnNames.length;
+    this.getters = Array.from(row.propertyMap.values()).map(function(prop) { return prop.descriptor.get; });;
+    this.columns = this.columnNames.map(function() { return []; });
+    this.columnWidths = this.columnNames.map(function(name) { return name.length; });
+    return new Set(this.columnNames);
+  }
+
+  addState() {
+    return;
+  }
+
+  step() {
+    var getter, val, columnWidth;
+    var getters = this.getters;
+    var columns = this.columns;
+    var numberOfColumns = this.numberOfColumns;
+    var columnWidths = this.columnWidths;
+    for (var colIndex = 0; colIndex < numberOfColumns; colIndex++) {
+      getter = getters[colIndex];
+      val = getter();
+      columnWidth = val.toString().length;
+      columns[colIndex].push(val);
+      if (columnWidth > columnWidths[colIndex]) {
+        columnWidths[colIndex] = columnWidth;
+      }
+    }
+  }
+
+  complete() {
+    return {columnNames: this.columnNames, columns: this.columns, columnWidths: this.columnWidths};
+  }
+}
 
 var Operations = {};
+Operations.Container = Container;
 Operations.SelectOperation = SelectOperation;
 Operations.RenameOperation = RenameOperation;
+Operations.SliceOperation = SliceOperation;
 Operations.FilterOperation = FilterOperation;
 Operations.MutateOperation = MutateOperation;
 Operations.GroupByOperation = GroupByOperation;
