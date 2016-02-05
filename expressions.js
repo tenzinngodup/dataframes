@@ -7,7 +7,7 @@ class ExpressionManager {
     this.summarizer = new ExpressionSummarizer();
     this.tester = new ExpressionTester();
     this.default = new ExpressionDefault();
-    this.handler = this.default;    
+    this.handler = this.default;
   }
 
   evaluate(expression, row) {
@@ -17,9 +17,9 @@ class ExpressionManager {
     return result;
   }
 
-  summarize(expression, groupIndex) {
+  summarize(expression, row) {
     this.handler = this.summarizer;
-    var result = this.summarizer.summarize(expression, groupIndex);
+    var result = this.summarizer.summarize(expression, row);
     this.handler = this.default;
     return result;
   }
@@ -46,7 +46,7 @@ class ExpressionManager {
 
 class ExpressionBuilder {
   constructor() {
-    this._lastExpression = null;    
+    this._lastExpression = null;
   }
 
   build(expression) {
@@ -85,11 +85,12 @@ class ExpressionSummarizer {
     this._nextExpression = null;
   }
 
-  summarize(expression, groupIndex) {
+  summarize(expression, row) {
     // calculate result of a SummaryFunctionExpression
     this._nextExpression = expression.nextExpression;
-    this._groupIndex = groupIndex;
-    return expression.func({});
+    this._groupIndex = row.rowIndex.value;
+    var res = expression.func({});
+    return res;
   }
 
   get(expressionConstructor, arg) {
@@ -190,7 +191,8 @@ class StatefulExpression extends Expression {
   }
 
   finalValue(groupIndex) {
-    return this.value(this.states[groupIndex])
+    var val = this.value(this.states[groupIndex]);
+    return val;
   }
 }
 
@@ -211,7 +213,7 @@ class SumExpression extends SummaryExpression {
 }
 
 class CumulativeSumExpression extends AccumulatorExpression {
-  
+
   accumulate(value, state) {
     return value + state;
   }
@@ -249,8 +251,8 @@ class SummaryFunctionExpression extends Expression {
     expManager.evaluate(this, row);
   }
 
-  summarize(groupIndex) {
-    return expManager.summarize(this, groupIndex);
+  summarize(row) {
+    return expManager.summarize(this, row);
   }
 }
 
@@ -274,5 +276,3 @@ Expressions.sum = sum;
 Expressions.cumsum = cumsum;
 
 module.exports = Expressions;
-
-

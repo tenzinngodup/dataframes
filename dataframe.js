@@ -1,112 +1,22 @@
 "use strict";
 
-var Operations = require("./operations.js");
 var Expressions = require("./expressions.js");
+var Steps = require("./step.js");
 
-var Container = Operations.Container;
-var EvaluateOperation = Operations.EvaluateOperation;
-var SelectOperation = Operations.SelectOperation;
-var RenameOperation = Operations.RenameOperation;
-var SliceOperation = Operations.SliceOperation;
-var ArrangeOperation = Operations.ArrangeOperation;
-var FilterOperation = Operations.FilterOperation;
-var MutateOperation = Operations.MutateOperation;
-var NewDataFrameOperation = Operations.NewDataFrameOperation;
-var GenerateRowOperation = Operations.GenerateRowOperation;
-var GroupByOperation = Operations.GroupByOperation;
-var SummarizeOperation = Operations.SummarizeOperation;
+var Step = Steps.Step;
+var FirstStep = Steps.FirstStep;
+var SliceStep = Steps.SliceStep;
+var SelectStep = Steps.SelectStep;
+var RenameStep = Steps.RenameStep;
+var EvaluateStep = Steps.EvaluateStep;
+var SummarizeStep = Steps.SummarizeStep;
+var MutateStep = Steps.MutateStep;
+var FilterStep = Steps.FilterStep;
+var GroupByStep = Steps.GroupByStep;
+var NewDataFrameStep = Steps.NewDataFrameStep;
 
 var FunctionExpression = Expressions.FunctionExpression;
 var SummaryFunctionExpression = Expressions.SummaryFunctionExpression;
-
-class Step {
-  constructor(previousStep) {
-    this.previousStep = previousStep;
-  }
-}
-
-class SliceStep extends Step {
-  constructor(previousStep, begin, end) {
-    this.begin = begin;
-    this.end = end;
-  }
-
-  buildOperation(nextOperation) {
-    var sliceOp = new SliceOperation(this.begin, this.end);
-    sliceOp.setNextOperation(nextOperation);
-    return this.previousStep.buildOperation(sliceOp);
-  }
-}
-
-class SelectStep extends Step {
-  constructor(previousStep, arg) {
-    super(previousStep);
-    this.arg = arg;
-  }
-
-  buildOperation(nextOperation) {
-    var selectOp = new SelectOperation(this.arg);
-    selectOp.setNextOperation(nextOperation);
-    return this.previousStep.buildOperation(selectOp);
-  }
-}
-
-class RenameStep extends Step {
-  constructor(previousStep, arg) {
-    super(previousStep);
-    this.arg = arg;
-  }
-
-  buildOperation(nextOperation) {
-    var renameOp = new RenameOperation(this.arg);
-    renameOp.setNextOperation(nextOperation);
-    return this.previousStep.buildOperation(renameOp);
-  }
-}
-
-class EvaluateStep extends Step {
-   constructor(previousStep, arg) {
-    super(previousStep);
-    this.arg = arg;
-  }
-
-  buildOperation(nextOperation) {
-    var container = new Container();
-    var customOp = this.getOperation(container);
-    customOp.setNextOperation(nextOperation);
-    var evaluateOp = new EvaluateOperation(this.arg, container);
-    evaluateOp.setNextOperation(customOp);
-    return this.previousStep.buildOperation(evaluateOp);
-  }
-}
-
-class MutateStep extends EvaluateStep {
-  constructor(previousStep, arg, name) {
-    super(previousStep, arg);
-    this.name = name;
-  }
-
-  getOperation(container) {
-    return new MutateOperation(container, this.name);
-  }
-}
-
-class FilterStep extends EvaluateStep {
-  getOperation(container) {
-    return new FilterOperation(container);
-  }
-}
-
-class GroupByStep extends EvaluateStep {
-  constructor(arg, name) {
-    super(arg);
-    this.name = name;
-  }
-
-  getOperation(container) {
-    return new GroupByOperation(container, this.name);
-  }
-}
 
 class LazyDataFrame {
   constructor(step) {
@@ -120,29 +30,29 @@ class LazyDataFrame {
         !(arg instanceof RegExp)) {
       step = new RenameStep(step, arg);
     }
-    return new LazyDataFrame(this, step);
+    return new LazyDataFrame(step);
     return newDataFrame;
   }
 
   rename(obj) {
     var step = new RenameStep(this._step, obj);
-    return new LazyDataFrame(this, step);
+    return new LazyDataFrame(step);
   }
 
   slice(begin, end) {
     var step = new SliceStep(this._step, begin, end);
-    return new LazyDataFrame(this, step);
+    return new LazyDataFrame(step);
   }
 
   filter(func) {
     var container = new Container();
     var step = new FilterStep(this._step, func);
-    return new LazyDataFrame(this, step);
+    return new LazyDataFrame(step);
   }
 
   mutate(name, func) {
     var step = new MutateStep(this._step, func, name);
-    return new LazyDataFrame(this, step);
+    return new LazyDataFrame(step);
   }
 
   groupBy(name, arg) {
@@ -153,32 +63,20 @@ class LazyDataFrame {
       func = arg;
     }
     var step = new GroupByStep(this._step, func, name);
-    return new LazyDataFrame(this, step);
+    return new LazyDataFrame(step);
   }
 
   summarize(name, func) {
     var step = new SummarizeStep(this._step, func, name);
-    return new LazyDataFrame(this, step);
+    return new LazyDataFrame(step);
   }
 
   collect() {
-    var operation = this._step.createOperation();
-    var df = this;
-    var previousOperation;
-    operation.setNextOperation(new NewDataFrameOperation());
-    while (df._previous !== null) {
-      df = df._previous;
-      previousOperation = df._step.createOperation();
-      previousOperation.setNextOperation(operation);
-      operation = previousOperation;
-    }
-    var requirements = operation.setup(df._columns);
-    console.log(requirements);
+    var finalStep = new NewDataFrameStep(this._step);
+    var operation = finalStep.buildOperation();
+    operation.setup();
     operation.addState();
-    var numberOfRows = df._numRows;
-    for (var rowIndex = 0; rowIndex < numberOfRows; rowIndex++) {
-      operation.step(rowIndex);
-    }
+    operation.run();
     var result = operation.complete();
     return new DataFrame(result);
   }
@@ -194,8 +92,7 @@ class LazyDataFrame {
 
 class DataFrame extends LazyDataFrame {
   constructor(options) {
-    var step = new Step(GenerateRowOperation, []);
-    super(null, step);
+    super(null);
     if (typeof options === "object") {
       if (options.columnNames !== undefined) {
         if (options.rows !== undefined) {
@@ -211,6 +108,7 @@ class DataFrame extends LazyDataFrame {
     } else {
       throw "Must pass an options object."
     }
+    this._step = new FirstStep(this._columns, this._numRows);
   }
 
   _fromRowObjects(rowData, columnNames) {

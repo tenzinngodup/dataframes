@@ -1,122 +1,16 @@
 "use strict";
 
-var Expressions = require("./expressions.js");
-var FunctionExpression = Expressions.FunctionExpression;
-var SummaryFunctionExpression = Expressions.SummaryFunctionExpression;
-var nullExp = Expressions.nullExp;
 
-class Index {
-  constructor() {
-    this.value = 0;
-  }
-
-  set(value) {
-    this.value = value;
-  }
-}
-
-class SubIndex extends Index {
-  constructor(parentIndex) {
-    super();
-    this.parentIndex = parentIndex;
-    this.parentIndexValues = [];
-  }
-
-  set(value) {
-    this.value = value;
-    var parentIndexValue = this.parentIndexValues[value];
-    this.parentIndex.set(parentIndexValue);
-  }
-
-  add() {
-    var parentIndexValue = this.parentIndexValues[value];
-    this.value = this.parentIndexValues.push(parentIndexValue) - 1;
-  }
-
-  numberOfRows() {
-    return this.parentIndexValues.length;
-  }
-}
-
-class Container {
-  constructor() {
-    this.value = NaN;
-  }
-}
-
-class Property {
-  constructor(descriptor) {
-    this.descriptor = descriptor;
-  }
-}
-
-class ContainerProperty extends Property {
-  constructor(container) {
-    var getter = function() { return container.value; };
-    var descriptor = { get: getter };
-    super(descriptor);
-    this.container = container;
-  }
-}
-
-class IndexedProperty extends Property {
-  constructor(index, values) {
-    var getter = function() { return values[index.value]; };
-    var descriptor = { get: getter };
-    super(descriptor);
-    this.values = values;
-    this.index = index;
-  }
-}
-
-class RowValues {
-  constructor(propertyMap) {
-    for (var keyval of propertyMap) {
-      var name = keyval[0];
-      var prop = keyval[1];
-      Object.defineProperty(this, name, prop.descriptor);
-    }
-  }
-}
-
-class StubValues {
-  constructor(columnNames) {
-    for (var columnName of columnNames) {
-      var descriptor = { get: this.getGetter(columnName) };
-      Object.defineProperty(this, columnName, descriptor);
-    }
-    this.requirements = new Set();
-  }
-
-  getGetter(name) {
-    return () => { this.requirements.add(name); return NaN; };
-  }
-}
-
-class Row {
-  constructor(rowIndex, propertyMap, grouping) {
-    this.rowIndex = rowIndex;
-    this.propertyMap = propertyMap;
-    this.grouping = grouping;
-    this.values = new RowValues(propertyMap);
-  }
-}
-
-class Grouping {
-  constructor(parentGrouping, groupName) {
-    this.parentGrouping = parentGrouping;
-    if (parentGrouping === null) {
-      this.groupName = null;
-      this.keys = null;
-      this.parents = null;
-    } else {
-      this.groupName = groupName;
-      this.keys = [];
-      this.parents = [];
-    }
-    this.index = new Index();
-  }
-}
+var Tools = require("./tools.js");
+var Index = Tools.Index;
+var SubIndex = Tools.SubIndex;
+var Container = Tools.Container;
+var Property = Tools.Property;
+var ContainerProperty = Tools.ContainerProperty;
+var IndexedProperty = Tools.IndexedProperty;
+var Row = Tools.Row;
+var RowValues = Tools.RowValues;
+var Grouping = Tools.Grouping;
 
 class Operation {
   constructor() {
@@ -132,17 +26,7 @@ class Operation {
   setup(row) {
     this.oldRow = row;
     this.newRow = this.setupRow(row);
-    var subsequentRequirements = this.nextOperation.setup(this.newRow);
-    var requirements = this.setupRequirements(subsequentRequirements, this.oldRow);
-    return requirements;
-  }
-
-  setupRequirements(subsequentRequirements) {
-    return subsequentRequirements;
-  }
-
-  checkRequirements(stub) {
-    return this.nextOperation.checkRequirements(stub);
+    this.nextOperation.setup(this.newRow);
   }
 
   setupRow(row) {
@@ -178,6 +62,12 @@ class Operation {
 }
 
 class GenerateRowOperation extends Operation {
+  constructor(columns, numRows) {
+    super();
+    this.columns = columns;
+    this.numRows = numRows;
+  }
+
   setupPropertyMap(columnMap, rowIndex) {
     var propertyMap = new Map();
     var column, columnName, prop;
@@ -190,12 +80,8 @@ class GenerateRowOperation extends Operation {
     return propertyMap;
   }
 
-  checkRequirements(columnMap) {
-    var columnSet = Set(columnMap.keys());
-    this.nextOperation.checkRequirements(columnSet);
-  }
-
-  setup(columnMap) {
+  setup() {
+    var columnMap = this.columns;
     var rowIndex = new Index();
     var grouping = new Grouping(null);
     var propertyMap = this.setupPropertyMap(columnMap, rowIndex);
@@ -205,10 +91,13 @@ class GenerateRowOperation extends Operation {
     return this.nextOperation.setup(newRow);
   }
 
-  step(index) {
-    this.rowIndex.value = index;
-    this.groupIndex.value = 0;
-    this.nextOperation.step();
+  run() {
+    var numRows = this.numRows;
+    for (var i = 0; i < numRows; i++) {
+      this.rowIndex.value = i;
+      this.groupIndex.value = 0;
+      this.nextOperation.step();
+    }
   }
 }
 
@@ -224,28 +113,14 @@ class ReIndexer {
 }
 
 class EvaluateOperation extends Operation {
-  constructor(arg, container) {
+  constructor(container, exp) {
     super();
-    var exp = arg;
-    if (typeof arg === "function") {
-      exp = new FunctionExpression(arg);
-    }
     this.expression = exp;
     this.container = container;
   }
 
-  checkRequirements(columnSet) {
-    var stub = new StubValues(columnSet);
-    var subsequentRequirements = this.nextOperation.checkRequirements(columnSet);
-    var expressionRequirements = this.expression.requirements(stub);
-    for (var req of expressionRequirements) {
-      subsequentRequirements.add(req);
-    }
-    return subsequentRequirements;
-  }
-
   step() {
-    this.container.value = this.expression.evaluate(this.row);
+    this.container.value = this.expression.evaluate(this.oldRow);
     this.nextOperation.step();
   }
 
@@ -256,8 +131,15 @@ class EvaluateOperation extends Operation {
 
 }
 
-class SummaryEvaluateOperation extends Operation {
+class SummaryEvaluateOperation extends EvaluateOperation {
+  step() {
+    this.container.value = this.expression.summarize(this.oldRow);
+    this.nextOperation.step();
+  }
 
+  addState() {
+    this.nextOperation.addState();
+  }
 }
 
 class ExpressionOperation extends Operation {
@@ -343,15 +225,6 @@ class RenameOperation extends Operation {
     return newPropertyMap;
   }
 
-  setupRequirements(subsequentRequirements) {
-    var requirements = new Set();
-    var inverseNameMap = this.inverseNameMap;
-    for (var newName of subsequentRequirements) {
-      requirements.add(inverseNameMap.get(newName) || newName);
-    }
-    return requirements;
-  }
-
 }
 
 class SliceOperation extends Operation {
@@ -426,18 +299,6 @@ class PropertyReIndexOperation extends ReIndexOperation {
     return newPropertyMap;
   }
 
-  setupRequirements(subsequentRequirements) {
-    for (var keyvalue of reIndexerMap) {
-      var name = keyvalue[0];
-      var reIndexer;
-      if (subsequentRequirements.has(name)) {
-        reIndexer = keyvalue[1];
-        this.reIndexers.push(reIndexer);
-      }
-    }
-    return subsequentRequirements;
-  }
-
   step() {
     super.step();
     var reIndexer;
@@ -461,24 +322,17 @@ class MutateOperation extends ExpressionOperation {
     return propertyMap;
   }
 
-  setupRequirements(subsequentRequirements, row) {
-    subsequentRequirements.delete(this.name);
-    return super.setupRequirements(subsequentRequirements, row);
-  }
 }
 
-class AccumulateOperation extends Operation {
-  constructor(arg) {
+class AccumulateOperation extends EvaluateOperation {
+  constructor(exp) {
     super();
-    var exp = arg;
-    if (typeof arg === "function") {
-      exp = new SummaryFunctionExpression(arg);
-    }
     this.expression = exp;
   }
 
   step() {
-    this.expression.evalute(this.row);
+    this.expression.accumulate(this.oldRow);
+    this.nextOperation.step();
   }
 }
 
@@ -500,7 +354,7 @@ class SummarizeOperation extends Operation {
   }
 
   setupRowIndex(row) {
-    return row.grouping.groupIndex;
+    return row.grouping.index;
   }
 
   setupGrouping(row) {
@@ -624,6 +478,9 @@ Operations.SliceOperation = SliceOperation;
 Operations.FilterOperation = FilterOperation;
 Operations.MutateOperation = MutateOperation;
 Operations.GroupByOperation = GroupByOperation;
+Operations.EvaluateOperation = EvaluateOperation;
+Operations.SummaryEvaluateOperation = SummaryEvaluateOperation;
+Operations.AccumulateOperation = AccumulateOperation;
 Operations.SummarizeOperation = SummarizeOperation;
 Operations.GenerateRowOperation = GenerateRowOperation;
 Operations.NewDataFrameOperation = NewDataFrameOperation;
