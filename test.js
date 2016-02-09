@@ -56,7 +56,7 @@ var columnNames = ["first_name",
 
 var df = new DataFrame({rows: data, columnNames: columnNames})
 	.mutate("cumulative", function(row) { return cumsum(row.pres_number); })
-	.groupBy("party")
-	.mutate("double_cumulative", function(row) { return cumsum(row.cumulative); })
+	.groupBy(function(row) { return row.party; })
+	.mutate("double_cumulative", function(row) { return row.cumulative / sum(row.cumulative); })
 	.summarize("total", function(row) { return sum(row.double_cumulative); });
 console.log(df);

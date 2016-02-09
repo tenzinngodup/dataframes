@@ -13,6 +13,7 @@ var EvaluateOperation = Operations.EvaluateOperation;
 var SelectOperation = Operations.SelectOperation;
 var RenameOperation = Operations.RenameOperation;
 var SliceOperation = Operations.SliceOperation;
+var ArrangeOperation = Operations.ArrangeOperation;
 var EvaluateOperation = Operations.EvaluateOperation;
 var SummaryEvaluateOperation = Operations.SummaryEvaluateOperation;
 var AccumulateOperation = Operations.AccumulateOperation;
@@ -85,6 +86,22 @@ class RenameStep extends Step {
     var renameOp = new RenameOperation(this.arg);
     renameOp.setNextOperation(nextOperation);
     return this.previousStep.buildOperation(renameOp);
+  }
+}
+
+class ArrangeStep extends Step {
+  constructor(previousStep, arg) {
+    super(previousStep, arg);
+  }
+
+  buildOperation(container) {
+    var expression = new FunctionExpression(this.arg);
+    var container = new Container();
+    var arrangeOp = new ArrangeOperation(container);
+    customOp.setNextOperation(nextOperation);
+    var evaluateOp = new EvaluateOperation(container, expression);
+    evaluateOp.setNextOperation(customOp);
+    return this.previousStep.buildOperation(evaluateOp);
   }
 }
 

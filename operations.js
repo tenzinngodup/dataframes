@@ -268,6 +268,7 @@ class ReIndexOperation extends Operation {
 
   step() {
     this.subIndex.add();
+    this.nextOperation.step();
   }
 }
 
@@ -300,12 +301,46 @@ class PropertyReIndexOperation extends ReIndexOperation {
   }
 
   step() {
-    super.step();
     var reIndexer;
     for (var i = 0; i < this.reIndexers.length; i++) {
       reIndexer = this.reIndexers[i];
       reIndexer.add();
     }
+    super.step();
+  }
+}
+
+class ColumnBuildOperation extends ExpressionOperation {
+  constructor(container, columnArray) {
+    super();
+    this.container = container;
+    this.column = columnArray;
+  }
+
+  step() {
+    this.column.push(this.container.value);
+  }
+}
+
+class ArrangeOperation extends Operation {
+  constructor(container, column, name) {
+    super(container);
+    this.column = column;
+    this.name = name;
+  }
+
+  setupRowIndex(row) {
+    this.subIndex = new SubIndex(row.rowIndex);
+    return;
+  }
+
+  step() {
+    this.subIndex.add();
+  }
+
+  complete() {
+    var numRows = this.subIndex.numberOfRows();
+    // to be continued
   }
 }
 
@@ -321,7 +356,6 @@ class MutateOperation extends ExpressionOperation {
     propertyMap.set(this.name, prop);
     return propertyMap;
   }
-
 }
 
 class AccumulateOperation extends EvaluateOperation {
@@ -475,6 +509,7 @@ Operations.Container = Container;
 Operations.SelectOperation = SelectOperation;
 Operations.RenameOperation = RenameOperation;
 Operations.SliceOperation = SliceOperation;
+Operations.ArrangeOperation = ArrangeOperation;
 Operations.FilterOperation = FilterOperation;
 Operations.MutateOperation = MutateOperation;
 Operations.GroupByOperation = GroupByOperation;

@@ -205,19 +205,15 @@ class SummaryExpression extends StatefulExpression {
 }
 
 class SumExpression extends SummaryExpression {
-
   accumulate(value, state) {
     return value + state;
   }
-
 }
 
 class CumulativeSumExpression extends AccumulatorExpression {
-
   accumulate(value, state) {
     return value + state;
   }
-
 }
 
 var expManager = new ExpressionManager();
