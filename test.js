@@ -1,11 +1,11 @@
 "use strict";
 
 var DataFrame = require("./dataframe.js");
-var Expressions = require("./expressions.js");
+var Formulas = require("./formulas.js");
 
-var sum = Expressions.sum;
-var cumsum = Expressions.cumsum;
-var Expression = Expressions.Expression;
+var sum = Formulas.sum;
+var cumsum = Formulas.cumsum;
+var Formula = Formulas.Formula;
 
 var data = [
 	{

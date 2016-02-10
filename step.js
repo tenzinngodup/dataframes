@@ -5,9 +5,9 @@ var Tools = require("./tools.js");
 var Operations = require("./operations.js");
 var Container = Tools.Container;
 
-var Expressions = require("./expressions.js");
-var FunctionExpression = Expressions.FunctionExpression;
-var SummaryFunctionExpression = Expressions.SummaryFunctionExpression;
+var Formulas = require("./formulas.js");
+var FunctionFormula = Formulas.FunctionFormula;
+var SummaryFunctionFormula = Formulas.SummaryFunctionFormula;
 
 var EvaluateOperation = Operations.EvaluateOperation;
 var SelectOperation = Operations.SelectOperation;
@@ -95,11 +95,11 @@ class ArrangeStep extends Step {
   }
 
   buildOperation(container) {
-    var expression = new FunctionExpression(this.arg);
+    var formula = new FunctionFormula(this.arg);
     var container = new Container();
     var arrangeOp = new ArrangeOperation(container);
     customOp.setNextOperation(nextOperation);
-    var evaluateOp = new EvaluateOperation(container, expression);
+    var evaluateOp = new EvaluateOperation(container, formula);
     evaluateOp.setNextOperation(customOp);
     return this.previousStep.buildOperation(evaluateOp);
   }
@@ -112,11 +112,11 @@ class EvaluateStep extends Step {
   }
 
   buildOperation(nextOperation) {
-    var expression = new FunctionExpression(this.arg);
+    var formula = new FunctionFormula(this.arg);
     var container = new Container();
     var customOp = this.getOperation(container);
     customOp.setNextOperation(nextOperation);
-    var evaluateOp = new EvaluateOperation(container, expression);
+    var evaluateOp = new EvaluateOperation(container, formula);
     evaluateOp.setNextOperation(customOp);
     return this.previousStep.buildOperation(evaluateOp);
   }
@@ -131,10 +131,10 @@ class SummarizeStep extends Step {
 
   buildOperation(nextOperation) {
     var container = new Container();
-    var expression = new SummaryFunctionExpression(this.arg);
-    var accOp = new AccumulateOperation(expression);
+    var formula = new SummaryFunctionFormula(this.arg);
+    var accOp = new AccumulateOperation(formula);
     var summarizeOp = new SummarizeOperation();
-    var sumEvOp = new SummaryEvaluateOperation(container, expression);
+    var sumEvOp = new SummaryEvaluateOperation(container, formula);
     var mutateOp = new MutateOperation(container, this.name);
     accOp.setNextOperation(summarizeOp);
     summarizeOp.setNextOperation(sumEvOp);

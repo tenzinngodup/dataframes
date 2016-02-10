@@ -1,16 +1,14 @@
 "use strict";
 
-
 var Tools = require("./tools.js");
 var Index = Tools.Index;
 var SubIndex = Tools.SubIndex;
 var Container = Tools.Container;
-var Property = Tools.Property;
 var ContainerProperty = Tools.ContainerProperty;
 var IndexedProperty = Tools.IndexedProperty;
 var Row = Tools.Row;
-var RowValues = Tools.RowValues;
 var Grouping = Tools.Grouping;
+
 
 class Operation {
   constructor() {
@@ -108,24 +106,24 @@ class ReIndexer {
   }
 
   add() {
-    this.values.push(container.value);
+    this.values.push(this.container.value);
   }
 }
 
 class EvaluateOperation extends Operation {
   constructor(container, exp) {
     super();
-    this.expression = exp;
+    this.formula = exp;
     this.container = container;
   }
 
   step() {
-    this.container.value = this.expression.evaluate(this.oldRow);
+    this.container.value = this.formula.evaluate(this.oldRow);
     this.nextOperation.step();
   }
 
   addState() {
-    this.expression.addState();
+    this.formula.addState();
     this.nextOperation.addState();
   }
 
@@ -133,7 +131,7 @@ class EvaluateOperation extends Operation {
 
 class SummaryEvaluateOperation extends EvaluateOperation {
   step() {
-    this.container.value = this.expression.summarize(this.oldRow);
+    this.container.value = this.formula.summarize(this.oldRow);
     this.nextOperation.step();
   }
 
@@ -142,14 +140,14 @@ class SummaryEvaluateOperation extends EvaluateOperation {
   }
 }
 
-class ExpressionOperation extends Operation {
+class FormulaOperation extends Operation {
   constructor(container) {
     super();
     this.container = container;
   }
 }
 
-class FilterOperation extends ExpressionOperation {
+class FilterOperation extends FormulaOperation {
   step() {
     if (this.container.value) {
       this.nextOperation.step();
@@ -208,8 +206,8 @@ class RenameOperation extends Operation {
 
   setupPropertyMap(row) {
     var obj = this.obj;
+    var propertyMap = row.propertyMap;
     var newPropertyMap = new Map();
-    var inverseNameMap = new Map();
     var oldNames = Object.keys(obj);
     var oldName, newName, prop;
     for (var i = 0; i < oldNames.length; i++) {
@@ -218,10 +216,8 @@ class RenameOperation extends Operation {
       if (prop !== undefined) {
         newName = obj[oldName];
         newPropertyMap.set(newName, prop);
-        inverseNameMap.set(newName, oldName);
       }
     }
-    this.inverseNameMap = inverseNameMap;
     return newPropertyMap;
   }
 
@@ -310,7 +306,7 @@ class PropertyReIndexOperation extends ReIndexOperation {
   }
 }
 
-class ColumnBuildOperation extends ExpressionOperation {
+class ColumnBuildOperation extends FormulaOperation {
   constructor(container, columnArray) {
     super();
     this.container = container;
@@ -323,28 +319,30 @@ class ColumnBuildOperation extends ExpressionOperation {
 }
 
 class ArrangeOperation extends Operation {
-  constructor(container, column, name) {
+  constructor(container) {
     super(container);
-    this.column = column;
-    this.name = name;
+    this.comparatorValues = [];
   }
 
   setupRowIndex(row) {
     this.subIndex = new SubIndex(row.rowIndex);
-    return;
+    return this.subIndex;
   }
 
   step() {
     this.subIndex.add();
+    this.comparatorValues.push(this.container.value);
   }
 
   complete() {
     var numRows = this.subIndex.numberOfRows();
-    // to be continued
+    for (var i = 0; i < numRows; i++) {
+      this.sub
+    }
   }
 }
 
-class MutateOperation extends ExpressionOperation {
+class MutateOperation extends FormulaOperation {
   constructor(container, name) {
     super(container);
     this.name = name;
@@ -361,11 +359,11 @@ class MutateOperation extends ExpressionOperation {
 class AccumulateOperation extends EvaluateOperation {
   constructor(exp) {
     super();
-    this.expression = exp;
+    this.formula = exp;
   }
 
   step() {
-    this.expression.accumulate(this.oldRow);
+    this.formula.accumulate(this.oldRow);
     this.nextOperation.step();
   }
 }
@@ -405,18 +403,22 @@ class SummarizeOperation extends Operation {
     return;
   }
 
-  complete() {
-    var oldGrouping = this.oldRow.grouping;
-    // set up subsequent states
-    var newGrouping = this.newRow.grouping;
+  addSubsequentState(newGrouping) {
     if (newGrouping !== null && newGrouping.parentGrouping !== null) {
       var numberOfNewGroups = newGrouping.keys.length;
-      for (var i = 0; i < numberOfParentGroups; i++) {
+      for (var groupIndex = 0; groupIndex < numberOfNewGroups; groupIndex++) {
         this.nextOperation.addState();
       }
     } else {
       this.nextOperation.addState();
     }
+  }
+
+  complete() {
+    var oldGrouping = this.oldRow.grouping;
+    // set up subsequent states
+    var newGrouping = this.newRow.grouping;
+    this.addSubsequentState(newGrouping);
     var groupIndex = oldGrouping.index;
     var keys = oldGrouping.keys;
     var numberOfGroups = oldGrouping.keys ? oldGrouping.keys.length : 1;
@@ -434,7 +436,7 @@ class SummarizeOperation extends Operation {
   }
 }
 
-class GroupByOperation extends ExpressionOperation {
+class GroupByOperation extends FormulaOperation {
   constructor(container, name) {
     super(container);
     this.name = name;
@@ -472,7 +474,7 @@ class NewDataFrameOperation extends Operation {
   setup(row) {
     this.columnNames = Array.from(row.propertyMap.keys());
     this.numberOfColumns = this.columnNames.length;
-    this.getters = Array.from(row.propertyMap.values()).map(function(prop) { return prop.descriptor.get; });;
+    this.getters = Array.from(row.propertyMap.values()).map(function(prop) { return prop.descriptor.get; });
     this.columns = this.columnNames.map(function() { return []; });
     this.columnWidths = this.columnNames.map(function(name) { return name.length; });
     return new Set(this.columnNames);
@@ -519,5 +521,6 @@ Operations.AccumulateOperation = AccumulateOperation;
 Operations.SummarizeOperation = SummarizeOperation;
 Operations.GenerateRowOperation = GenerateRowOperation;
 Operations.NewDataFrameOperation = NewDataFrameOperation;
+Operations.PropertyReIndexOperation = PropertyReIndexOperation;
 
 module.exports = Operations;

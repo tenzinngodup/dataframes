@@ -1,6 +1,6 @@
 "use strict";
 
-var Expressions = require("./expressions.js");
+var Formulas = require("./formulas.js");
 var Steps = require("./step.js");
 
 var Step = Steps.Step;
@@ -15,8 +15,8 @@ var FilterStep = Steps.FilterStep;
 var GroupByStep = Steps.GroupByStep;
 var NewDataFrameStep = Steps.NewDataFrameStep;
 
-var FunctionExpression = Expressions.FunctionExpression;
-var SummaryFunctionExpression = Expressions.SummaryFunctionExpression;
+var FunctionFormula = Formulas.FunctionFormula;
+var SummaryFunctionFormula = Formulas.SummaryFunctionFormula;
 
 class LazyDataFrame {
   constructor(step) {
