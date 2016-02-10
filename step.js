@@ -6,8 +6,8 @@ var Operations = require("./operations.js");
 var Container = Tools.Container;
 
 var Formulas = require("./formulas.js");
-var FunctionFormula = Formulas.FunctionFormula;
-var SummaryFunctionFormula = Formulas.SummaryFunctionFormula;
+var CustomFormula = Formulas.CustomFormula;
+var CustomSummaryFormula = Formulas.CustomSummaryFormula;
 
 var EvaluateOperation = Operations.EvaluateOperation;
 var SelectOperation = Operations.SelectOperation;
@@ -95,7 +95,7 @@ class ArrangeStep extends Step {
   }
 
   buildOperation(container) {
-    var formula = new FunctionFormula(this.arg);
+    var formula = new CustomFormula(this.arg);
     var container = new Container();
     var arrangeOp = new ArrangeOperation(container);
     customOp.setNextOperation(nextOperation);
@@ -112,7 +112,7 @@ class EvaluateStep extends Step {
   }
 
   buildOperation(nextOperation) {
-    var formula = new FunctionFormula(this.arg);
+    var formula = new CustomFormula(this.arg);
     var container = new Container();
     var customOp = this.getOperation(container);
     customOp.setNextOperation(nextOperation);
@@ -131,7 +131,7 @@ class SummarizeStep extends Step {
 
   buildOperation(nextOperation) {
     var container = new Container();
-    var formula = new SummaryFunctionFormula(this.arg);
+    var formula = new CustomSummaryFormula(this.arg);
     var accOp = new AccumulateOperation(formula);
     var summarizeOp = new SummarizeOperation();
     var sumEvOp = new SummaryEvaluateOperation(container, formula);
