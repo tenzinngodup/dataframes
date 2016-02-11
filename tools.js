@@ -23,12 +23,16 @@ class SubIndex extends Index {
     this.parentIndex.set(parentIndexValue);
   }
 
+  setParentIndices(parentIndexValues) {
+    this.parentIndexValues = parentIndexValues;
+  }
+
   add() {
-    var parentIndexValue = this.parentIndexValues[value];
+    var parentIndexValue = this.parentIndex.value;
     this.value = this.parentIndexValues.push(parentIndexValue) - 1;
   }
 
-  numberOfRows() {
+  length() {
     return this.parentIndexValues.length;
   }
 }
@@ -76,7 +80,7 @@ class RowValues {
 
 class Row {
   constructor(rowIndex, propertyMap, grouping) {
-    this.rowIndex = rowIndex;
+    this.index = rowIndex;
     this.propertyMap = propertyMap;
     this.grouping = grouping;
     this.values = new RowValues(propertyMap);
@@ -103,8 +107,8 @@ var Tools = {};
 
 Tools.Index = Index;
 Tools.SubIndex = SubIndex;
-Tools.Container = Container;
 Tools.Property = Property;
+Tools.Container = Container;
 Tools.ContainerProperty = ContainerProperty;
 Tools.IndexedProperty = IndexedProperty;
 Tools.Row = Row;

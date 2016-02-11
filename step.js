@@ -1,21 +1,18 @@
 "use strict";
 
-var Tools = require("./tools.js");
-
 var Operations = require("./operations.js");
-var Container = Tools.Container;
 
 var Formulas = require("./formulas.js");
 var CustomFormula = Formulas.CustomFormula;
 var CustomSummaryFormula = Formulas.CustomSummaryFormula;
+var OrderFormula = Formulas.OrderFormula;
 
-var EvaluateOperation = Operations.EvaluateOperation;
 var SelectOperation = Operations.SelectOperation;
 var RenameOperation = Operations.RenameOperation;
 var SliceOperation = Operations.SliceOperation;
 var ArrangeOperation = Operations.ArrangeOperation;
-var EvaluateOperation = Operations.EvaluateOperation;
-var SummaryEvaluateOperation = Operations.SummaryEvaluateOperation;
+var OrderOperation = Operations.OrderOperation;
+var SummaryMutateOperation = Operations.SummaryMutateOperation;
 var AccumulateOperation = Operations.AccumulateOperation;
 var FilterOperation = Operations.FilterOperation;
 var MutateOperation = Operations.MutateOperation;
@@ -89,36 +86,17 @@ class RenameStep extends Step {
   }
 }
 
-class ArrangeStep extends Step {
-  constructor(previousStep, arg) {
-    super(previousStep, arg);
-  }
-
-  buildOperation(container) {
-    var formula = new CustomFormula(this.arg);
-    var container = new Container();
-    var arrangeOp = new ArrangeOperation(container);
-    customOp.setNextOperation(nextOperation);
-    var evaluateOp = new EvaluateOperation(container, formula);
-    evaluateOp.setNextOperation(customOp);
-    return this.previousStep.buildOperation(evaluateOp);
-  }
-}
-
-class EvaluateStep extends Step {
+class FormulaStep extends Step {
    constructor(previousStep, arg) {
     super(previousStep);
     this.arg = arg;
   }
 
   buildOperation(nextOperation) {
-    var formula = new CustomFormula(this.arg);
-    var container = new Container();
-    var customOp = this.getOperation(container);
-    customOp.setNextOperation(nextOperation);
-    var evaluateOp = new EvaluateOperation(container, formula);
-    evaluateOp.setNextOperation(customOp);
-    return this.previousStep.buildOperation(evaluateOp);
+    var formula = new CustomFormula();
+    var op = this.getOperation(formula);
+    op.setNextOperation(nextOperation);
+    return this.previousStep.buildOperation(op);
   }
 }
 
@@ -130,45 +108,52 @@ class SummarizeStep extends Step {
   }
 
   buildOperation(nextOperation) {
-    var container = new Container();
     var formula = new CustomSummaryFormula(this.arg);
     var accOp = new AccumulateOperation(formula);
     var summarizeOp = new SummarizeOperation();
-    var sumEvOp = new SummaryEvaluateOperation(container, formula);
-    var mutateOp = new MutateOperation(container, this.name);
+    var sumMutateOp = new SummaryMutateOperation(formula, this.name);
     accOp.setNextOperation(summarizeOp);
-    summarizeOp.setNextOperation(sumEvOp);
-    sumEvOp.setNextOperation(mutateOp);
-    mutateOp.setNextOperation(nextOperation);
+    summarizeOp.setNextOperation(sumMutateOp);
+    sumMutateOp.setNextOperation(nextOperation);
     return this.previousStep.buildOperation(accOp);
   }
 }
 
-class MutateStep extends EvaluateStep {
+class MutateStep extends FormulaStep {
   constructor(previousStep, arg, name) {
     super(previousStep, arg);
     this.name = name;
   }
 
-  getOperation(container) {
-    return new MutateOperation(container, this.name);
+  getOperation(formula) {
+    return new MutateOperation(formula, this.name);
   }
 }
 
-class FilterStep extends EvaluateStep {
-  getOperation(container) {
-    return new FilterOperation(container);
+class ArrangeStep extends FormulaStep {
+  buildOperation(nextOperation) {
+    var orderingFormula = new CustomFormula(this.arg);
+    var formula = new OrderFormula([orderingFormula]);
+    var arrangeOp = new ArrangeOperation(formula);
+    arrangeOp.setNextOperation(nextOperation);
+    return this.previousStep.buildOperation(arrangeOp);
   }
 }
 
-class GroupByStep extends EvaluateStep {
+class FilterStep extends FormulaStep {
+  getOperation(formula) {
+    return new FilterOperation(formula);
+  }
+}
+
+class GroupByStep extends FormulaStep {
   constructor(previousStep, arg, name) {
     super(previousStep, arg);
     this.name = name;
   }
 
-  getOperation(container) {
-    return new GroupByOperation(container, this.name);
+  getOperation(formula) {
+    return new GroupByOperation(formula, this.name);
   }
 }
 
@@ -179,7 +164,7 @@ Steps.FirstStep = FirstStep;
 Steps.SliceStep = SliceStep;
 Steps.SelectStep = SelectStep;
 Steps.RenameStep = RenameStep;
-Steps.EvaluateStep = EvaluateStep;
+Steps.ArrangeStep = ArrangeStep;
 Steps.SummarizeStep = SummarizeStep;
 Steps.MutateStep = MutateStep;
 Steps.FilterStep = FilterStep;

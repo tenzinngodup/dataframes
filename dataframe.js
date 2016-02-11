@@ -1,22 +1,17 @@
 "use strict";
 
-var Formulas = require("./formulas.js");
 var Steps = require("./step.js");
 
-var Step = Steps.Step;
 var FirstStep = Steps.FirstStep;
 var SliceStep = Steps.SliceStep;
 var SelectStep = Steps.SelectStep;
 var RenameStep = Steps.RenameStep;
-var EvaluateStep = Steps.EvaluateStep;
 var SummarizeStep = Steps.SummarizeStep;
 var MutateStep = Steps.MutateStep;
 var FilterStep = Steps.FilterStep;
 var GroupByStep = Steps.GroupByStep;
+var ArrangeStep = Steps.ArrangeStep;
 var NewDataFrameStep = Steps.NewDataFrameStep;
-
-var FunctionFormula = Formulas.FunctionFormula;
-var SummaryFunctionFormula = Formulas.SummaryFunctionFormula;
 
 class LazyDataFrame {
   constructor(step) {
@@ -31,7 +26,6 @@ class LazyDataFrame {
       step = new RenameStep(step, arg);
     }
     return new LazyDataFrame(step);
-    return newDataFrame;
   }
 
   rename(obj) {
@@ -45,7 +39,6 @@ class LazyDataFrame {
   }
 
   filter(func) {
-    var container = new Container();
     var step = new FilterStep(this._step, func);
     return new LazyDataFrame(step);
   }
@@ -57,7 +50,10 @@ class LazyDataFrame {
 
   groupBy(name, arg) {
     var func;
-    if (arg === undefined) {
+    if (typeof name === "function") {
+      func = name;
+      name = func.toString();
+    } else if (arg === undefined) {
       func = new Function("row", "return row." + name);
     } else {
       func = arg;
@@ -66,8 +62,17 @@ class LazyDataFrame {
     return new LazyDataFrame(step);
   }
 
-  summarize(name, func) {
-    var step = new SummarizeStep(this._step, func, name);
+  summarize(name, arg) {
+    var step = new SummarizeStep(this._step, arg, name);
+    return new LazyDataFrame(step);
+  }
+
+  arrange(func) {
+    var func;
+    if (typeof func === "string") {
+      func = new Function("row", "return row." + func);
+    }
+    var step = new ArrangeStep(this._step, func);
     return new LazyDataFrame(step);
   }
 
@@ -201,7 +206,7 @@ class DataFrame extends LazyDataFrame {
     }
     str += "\n";
     for (var rowIndex = 0; rowIndex < numRows; rowIndex++) {
-      for (var colIndex = 0; colIndex < numColumns; colIndex++) {
+      for (colIndex = 0; colIndex < numColumns; colIndex++) {
         paddingString = columnPaddings[colIndex];
         str += (columns[colIndex][rowIndex] + paddingString).substring(0, paddingString.length) + " |";
       }

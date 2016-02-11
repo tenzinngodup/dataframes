@@ -1,5 +1,30 @@
 "use strict";
 
+/*
+
+Plan to add the following formulas:
+
+i / n
+first / last
+nth
+sampleN / sampleFrac
+distinct / unique
+sum / cumSum
+min / cumMin
+max / cumMax
+mean / cumMean
+median
+sd
+lead / lag
+any / cumAny
+all / cumAll
+minRank / denseRank
+percentRank / cumeDist
+ntile
+
+
+*/
+
 class FormulaManager {
   constructor() {
     this.builder = new FormulaBuilder();
@@ -41,6 +66,10 @@ class FormulaManager {
   get(formulaConstructor, argument) {
     return this.handler.get(formulaConstructor, argument);
   }
+
+  complete() {
+    return;
+  }
 }
 
 
@@ -55,7 +84,7 @@ class FormulaBuilder {
   }
 
   get(formulaConstructor, arg) {
-    var newFormula = new formulaConstructor();
+    var newFormula = new formulaConstructor(arg);
     this._lastFormula.nextFormula = newFormula;
     this._lastFormula = newFormula;
     return newFormula.stubValue();
@@ -86,9 +115,9 @@ class FormulaSummarizer {
   }
 
   summarize(formula, row) {
-    // calculate result of a SummaryFunctionFormula
+    // calculate result of a CustomSummaryFormula
     this._nextFormula = formula.nextFormula;
-    this._groupIndex = row.rowIndex.value;
+    this._groupIndex = row.grouping.index.value;
     var res = formula.func({});
     return res;
   }
@@ -128,13 +157,16 @@ class NullFormula {
   addState() { return; }
 
   build() { return; }
+
+  setRow(row) { return; }
 }
 
-var nullExp = new NullFormula();
+var nullFormula = new NullFormula();
 
 class Formula {
   constructor() {
-    this.nextFormula = nullExp;
+    this.nextFormula = nullFormula;
+    this.row = null;
   }
 
   stubValue() {
@@ -149,8 +181,9 @@ class Formula {
     return value;
   }
 
-  requirements(row) {
-    return new Set();
+  setRow(row) {
+    this.row = row;
+    this.nextFormula.setRow(row);
   }
 
   addState() {
@@ -200,8 +233,85 @@ class AccumulatorFormula extends StatefulFormula {
 
 }
 
+class LoopFormula extends StatefulFormula {
+
+}
+
 class SummaryFormula extends StatefulFormula {
 
+}
+
+class Comparator {
+  constructor(formula, nextComparator) {
+    this.values = [];
+    this.formula = formula;
+    this.nextComparator = nextComparator;
+  }
+
+  add() {
+    this.values.push(this.formula.evaluate());
+  }
+
+  setRow(row) {
+    this.formula.setRow(row);
+    this.nextComparator.setRow(row);
+  }
+
+  compare(a, b) {
+    var valA = this.values[a];
+    var valB = this.values[b];
+    var result;
+    if (valA === valB) {
+      result = this.nextComparator.compare(a, b); 
+    } else if (valA > valB) {
+      result = 1;
+    } else {
+      result = -1;
+    }
+    return result;
+  }
+}
+
+class NullComparator {
+  constructor() {}
+
+  add() { return; }
+
+  compare(a, b) { return 0; } 
+
+  setRow(row) { return; }
+}
+
+class OrderFormula extends Formula {
+  constructor(formulas) {
+    super();
+    var comparator = new NullComparator();
+    for (var i = formulas.length - 1; i >= 0; i--) {
+      comparator = new Comparator(formulas[i], comparator);
+    }
+    this.comparator = comparator;
+    this.indices = [];
+  }
+
+  accumulate() {
+    this.indices.push(this.indices.length);
+    this.comparator.add();
+  }
+
+  setRow(row) {
+    this.comparator.setRow(row);
+  }
+
+  complete() {
+    var comparator = this.comparator;
+    this.indices.sort(function(a, b) {
+      return comparator.compare(a, b);
+    });
+  }
+
+  finalValue() {
+    return this.indices;
+  }
 }
 
 class SumFormula extends SummaryFormula {
@@ -218,16 +328,16 @@ class CumulativeSumFormula extends AccumulatorFormula {
 
 var expManager = new FormulaManager();
 
-class FunctionFormula extends Formula {
+class CustomFormula extends Formula {
   constructor(func) {
     super();
     this.func = func;
-    this.nextFormula = nullExp;
+    this.nextFormula = nullFormula;
     expManager.build(this);
   }
 
-  evaluate(row) {
-    return expManager.evaluate(this, row);
+  evaluate() {
+    return expManager.evaluate(this, this.row);
   }
 
   requirements(row) {
@@ -235,20 +345,20 @@ class FunctionFormula extends Formula {
   }
 }
 
-class SummaryFunctionFormula extends Formula {
+class CustomSummaryFormula extends Formula {
   constructor(func) {
     super();
     this.func = func;
-    this.nextFormula = nullExp;
+    this.nextFormula = nullFormula;
     expManager.build(this);
   }
 
-  accumulate(row) {
-    expManager.evaluate(this, row);
+  accumulate() {
+    expManager.evaluate(this, this.row);
   }
 
-  summarize(row) {
-    return expManager.summarize(this, row);
+  summarize() {
+    return expManager.summarize(this, this.row);
   }
 }
 
@@ -263,11 +373,10 @@ var cumsum = createFunction(CumulativeSumFormula);
 
 var Formulas = {};
 
-Formulas.Formula = Formula;
-Formulas.FunctionFormula = FunctionFormula;
-Formulas.SummaryFunctionFormula = SummaryFunctionFormula;
+Formulas.CustomFormula = CustomFormula;
+Formulas.OrderFormula = OrderFormula;
+Formulas.CustomSummaryFormula = CustomSummaryFormula;
 Formulas.createFunction = createFunction;
-Formulas.nullExp = nullExp;
 Formulas.sum = sum;
 Formulas.cumsum = cumsum;
 

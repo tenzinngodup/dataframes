@@ -35,7 +35,7 @@ class Operation {
   }
 
   setupRowIndex(row) {
-    return row.rowIndex;
+    return row.index;
   }
 
   setupPropertyMap(row) {
@@ -100,56 +100,36 @@ class GenerateRowOperation extends Operation {
 }
 
 class ReIndexer {
-  constructor(container, values) {
-    this.container = container;
+  constructor(formula, values) {
+    this.formula = formula;
     this.values = values;
   }
 
   add() {
-    this.values.push(this.container.value);
+    this.values.push(this.formula.value);
   }
 }
 
-class EvaluateOperation extends Operation {
-  constructor(container, exp) {
+class FormulaOperation extends Operation {
+  constructor(formula) {
     super();
-    this.formula = exp;
-    this.container = container;
+    this.formula = formula;
   }
 
-  step() {
-    this.container.value = this.formula.evaluate(this.oldRow);
-    this.nextOperation.step();
+  setup(row) {
+    this.formula.setRow(row);
+    super.setup(row);
   }
 
   addState() {
     this.formula.addState();
     this.nextOperation.addState();
   }
-
-}
-
-class SummaryEvaluateOperation extends EvaluateOperation {
-  step() {
-    this.container.value = this.formula.summarize(this.oldRow);
-    this.nextOperation.step();
-  }
-
-  addState() {
-    this.nextOperation.addState();
-  }
-}
-
-class FormulaOperation extends Operation {
-  constructor(container) {
-    super();
-    this.container = container;
-  }
 }
 
 class FilterOperation extends FormulaOperation {
   step() {
-    if (this.container.value) {
+    if (this.formula.evaluate()) {
       this.nextOperation.step();
     }
   }
@@ -161,7 +141,8 @@ class SelectOperation extends Operation {
     this.arg = arg;
   }
 
-  setupPropertyMap(oldPropertyMap) {
+  setupPropertyMap(row) {
+    var oldPropertyMap = row.propertyMap;
     var names = this.getNames(oldPropertyMap);
     var newPropertyMap = new Map();
     var name, prop;
@@ -208,14 +189,16 @@ class RenameOperation extends Operation {
     var obj = this.obj;
     var propertyMap = row.propertyMap;
     var newPropertyMap = new Map();
-    var oldNames = Object.keys(obj);
+    var oldNames = Array.from(propertyMap.keys());
     var oldName, newName, prop;
     for (var i = 0; i < oldNames.length; i++) {
       oldName = oldNames[i];
       prop = propertyMap.get(oldName);
-      if (prop !== undefined) {
+      if (obj.hasOwnProperty(oldName)) {
         newName = obj[oldName];
         newPropertyMap.set(newName, prop);
+      } else {
+        newPropertyMap.set(oldName, prop);
       }
     }
     return newPropertyMap;
@@ -258,7 +241,7 @@ class ReIndexOperation extends Operation {
   }
 
   setupRowIndex(row) {
-    this.subIndex = new SubIndex(row.rowIndex);
+    this.subIndex = new SubIndex(row.index);
     return this.subIndex;
   }
 
@@ -283,9 +266,9 @@ class PropertyReIndexOperation extends ReIndexOperation {
     for (var keyvalue of propertyMap) {
       name = keyvalue[0];
       prop = keyvalue[1];
-      if (prop.container) {
+      if (prop.formula) {
         var values = [];
-        var reIndexer = new ReIndexer(prop.container, values);
+        var reIndexer = new ReIndexer(prop.formula, values);
         var reIndexedProp = new IndexedProperty(subIndex, values);
         newPropertyMap.set(name, reIndexedProp);
         this.reIndexerMap.set(name, reIndexer);
@@ -306,46 +289,28 @@ class PropertyReIndexOperation extends ReIndexOperation {
   }
 }
 
+/*
+
 class ColumnBuildOperation extends FormulaOperation {
-  constructor(container, columnArray) {
+  constructor(formula, columnArray) {
     super();
-    this.container = container;
+    this.formula = formula;
     this.column = columnArray;
   }
 
   step() {
-    this.column.push(this.container.value);
+    this.column.push(this.formula.evaluate());
   }
 }
 
-class ArrangeOperation extends Operation {
-  constructor(container) {
-    super(container);
-    this.comparatorValues = [];
-  }
+*/
 
-  setupRowIndex(row) {
-    this.subIndex = new SubIndex(row.rowIndex);
-    return this.subIndex;
-  }
-
-  step() {
-    this.subIndex.add();
-    this.comparatorValues.push(this.container.value);
-  }
-
-  complete() {
-    var numRows = this.subIndex.numberOfRows();
-    for (var i = 0; i < numRows; i++) {
-      this.sub
-    }
-  }
-}
 
 class MutateOperation extends FormulaOperation {
-  constructor(container, name) {
-    super(container);
+  constructor(formula, name) {
+    super(formula);
     this.name = name;
+    this.container = new Container();
   }
 
   setupPropertyMap(row) {
@@ -354,24 +319,73 @@ class MutateOperation extends FormulaOperation {
     propertyMap.set(this.name, prop);
     return propertyMap;
   }
+
+  step() {
+    this.container.value = this.formula.evaluate();
+    super.step();
+  }
 }
 
-class AccumulateOperation extends EvaluateOperation {
-  constructor(exp) {
-    super();
-    this.formula = exp;
+class SummaryMutateOperation extends MutateOperation {
+
+  setup(row) {
+    // don't change the formula's row
+    this.oldRow = row;
+    this.newRow = this.setupRow(row);
+    this.nextOperation.setup(this.newRow);
   }
 
   step() {
-    this.formula.accumulate(this.oldRow);
+    this.container.value = this.formula.summarize();
     this.nextOperation.step();
+  }
+
+  addState() {
+    this.nextOperation.addState();
+  }
+}
+
+class AccumulateOperation extends FormulaOperation {
+  step() {
+    this.formula.accumulate();
+    this.nextOperation.step();
+  }
+
+  complete() {
+    this.formula.complete();
+    return this.nextOperation.complete();
+  }
+}
+
+class ArrangeOperation extends FormulaOperation {
+  setupRowIndex(row) {
+    this.subIndex = new SubIndex(row.index);
+    return this.subIndex;
+  }
+
+  step() {
+    this.subIndex.add();
+    this.formula.accumulate();
+    return;
+  }
+
+  complete() {
+    this.formula.complete();
+    var indices = this.formula.finalValue();
+    var subIndex = this.subIndex;
+    subIndex.setParentIndices(indices);
+    var numberOfRows = subIndex.length();
+    for (var i = 0; i < numberOfRows; i++) {
+      subIndex.set(i);
+      this.nextOperation.step();
+    }
+    return this.nextOperation.complete();
   }
 }
 
 class SummarizeOperation extends Operation {
   constructor() {
     super();
-    this.container = new Container();
   }
 
   setupPropertyMap(row) {
@@ -379,7 +393,7 @@ class SummarizeOperation extends Operation {
     var grouping = row.grouping;
     var groupName = grouping.groupName;
     if (groupName !== null) {
-      var keyProp = new ContainerProperty(this.container);
+      var keyProp = new IndexedProperty(grouping.index, grouping.keys);
       propertyMap.set(groupName, keyProp);
     }
     return propertyMap;
@@ -403,33 +417,18 @@ class SummarizeOperation extends Operation {
     return;
   }
 
-  addSubsequentState(newGrouping) {
-    if (newGrouping !== null && newGrouping.parentGrouping !== null) {
-      var numberOfNewGroups = newGrouping.keys.length;
-      for (var groupIndex = 0; groupIndex < numberOfNewGroups; groupIndex++) {
-        this.nextOperation.addState();
-      }
-    } else {
+  complete() {
+    // add states to subsequent operations
+    var newGrouping = this.newRow.grouping;
+    var numberOfGroups = newGrouping.keys ? newGrouping.keys.length : 1;
+    for (var i = 0; i < numberOfGroups; i++) {
       this.nextOperation.addState();
     }
-  }
-
-  complete() {
+    var rowIndex = this.newRow.index;
+    // step with new rows
     var oldGrouping = this.oldRow.grouping;
-    // set up subsequent states
-    var newGrouping = this.newRow.grouping;
-    this.addSubsequentState(newGrouping);
-    var groupIndex = oldGrouping.index;
-    var keys = oldGrouping.keys;
-    var numberOfGroups = oldGrouping.keys ? oldGrouping.keys.length : 1;
-    if (keys) {
-      for (var i = 0; i < numberOfGroups; i++) {
-        groupIndex.value = i;
-        this.container.value = keys[i];
-        this.nextOperation.step();
-      }
-    } else {
-      groupIndex.value = 0;
+    var numberOfRows = oldGrouping.keys ? oldGrouping.keys.length : 1;
+    for (rowIndex.value = 0; rowIndex.value < numberOfRows; rowIndex.value++) {
       this.nextOperation.step();
     }
     return this.nextOperation.complete();
@@ -437,8 +436,8 @@ class SummarizeOperation extends Operation {
 }
 
 class GroupByOperation extends FormulaOperation {
-  constructor(container, name) {
-    super(container);
+  constructor(formula, name) {
+    super(formula);
     this.name = name;
     this.groupMappings = [];
     this.grouping = null;
@@ -454,7 +453,7 @@ class GroupByOperation extends FormulaOperation {
 
   step() {
     var grouping = this.newRow.grouping;
-    var key = this.container.value;
+    var key = this.formula.evaluate();
     var parentGroupIndexValue = grouping.parentGrouping.index.value;
     var groupMap = this.groupMappings[parentGroupIndexValue];
     var newGroupIndexValue = groupMap.get(key);
@@ -507,7 +506,6 @@ class NewDataFrameOperation extends Operation {
 }
 
 var Operations = {};
-Operations.Container = Container;
 Operations.SelectOperation = SelectOperation;
 Operations.RenameOperation = RenameOperation;
 Operations.SliceOperation = SliceOperation;
@@ -515,8 +513,7 @@ Operations.ArrangeOperation = ArrangeOperation;
 Operations.FilterOperation = FilterOperation;
 Operations.MutateOperation = MutateOperation;
 Operations.GroupByOperation = GroupByOperation;
-Operations.EvaluateOperation = EvaluateOperation;
-Operations.SummaryEvaluateOperation = SummaryEvaluateOperation;
+Operations.SummaryMutateOperation = SummaryMutateOperation;
 Operations.AccumulateOperation = AccumulateOperation;
 Operations.SummarizeOperation = SummarizeOperation;
 Operations.GenerateRowOperation = GenerateRowOperation;
