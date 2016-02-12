@@ -193,6 +193,10 @@ class Formula {
   finalValue(groupIndex) {
     return NaN;
   }
+
+  complete() {
+    return;
+  }
 }
 
 class StatefulFormula extends Formula {

@@ -59,6 +59,20 @@ class Operation {
   }
 }
 
+class LoopOperation extends Operation {
+  step() { return; }
+
+  complete() {
+    var index = this.oldRow.index;
+    var numberOfRows = index.length();
+    for (var i = 0; i < numberOfRows; i++) {
+      index.set(i);
+      this.nextOperation.step();
+    }
+    return this.nextOperation.complete();
+  }
+}
+
 class GenerateRowOperation extends Operation {
   constructor(columns, numRows) {
     super();
@@ -366,19 +380,13 @@ class ArrangeOperation extends FormulaOperation {
   step() {
     this.subIndex.add();
     this.formula.accumulate();
-    return;
+    this.nextOperation.step();
   }
 
   complete() {
     this.formula.complete();
     var indices = this.formula.finalValue();
-    var subIndex = this.subIndex;
-    subIndex.setParentIndices(indices);
-    var numberOfRows = subIndex.length();
-    for (var i = 0; i < numberOfRows; i++) {
-      subIndex.set(i);
-      this.nextOperation.step();
-    }
+    this.subIndex.setParentIndices(indices);
     return this.nextOperation.complete();
   }
 }
@@ -510,6 +518,7 @@ Operations.SelectOperation = SelectOperation;
 Operations.RenameOperation = RenameOperation;
 Operations.SliceOperation = SliceOperation;
 Operations.ArrangeOperation = ArrangeOperation;
+Operations.LoopOperation = LoopOperation;
 Operations.FilterOperation = FilterOperation;
 Operations.MutateOperation = MutateOperation;
 Operations.GroupByOperation = GroupByOperation;

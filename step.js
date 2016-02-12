@@ -11,6 +11,7 @@ var SelectOperation = Operations.SelectOperation;
 var RenameOperation = Operations.RenameOperation;
 var SliceOperation = Operations.SliceOperation;
 var ArrangeOperation = Operations.ArrangeOperation;
+var LoopOperation = Operations.LoopOperation;
 var OrderOperation = Operations.OrderOperation;
 var SummaryMutateOperation = Operations.SummaryMutateOperation;
 var AccumulateOperation = Operations.AccumulateOperation;
@@ -93,7 +94,7 @@ class FormulaStep extends Step {
   }
 
   buildOperation(nextOperation) {
-    var formula = new CustomFormula();
+    var formula = new CustomFormula(this.arg);
     var op = this.getOperation(formula);
     op.setNextOperation(nextOperation);
     return this.previousStep.buildOperation(op);
@@ -135,7 +136,9 @@ class ArrangeStep extends FormulaStep {
     var orderingFormula = new CustomFormula(this.arg);
     var formula = new OrderFormula([orderingFormula]);
     var arrangeOp = new ArrangeOperation(formula);
-    arrangeOp.setNextOperation(nextOperation);
+    var loopOp = new LoopOperation();
+    arrangeOp.setNextOperation(loopOp);
+    loopOp.setNextOperation(nextOperation);
     return this.previousStep.buildOperation(arrangeOp);
   }
 }

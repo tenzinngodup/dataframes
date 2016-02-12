@@ -54,14 +54,8 @@ var columnNames = ["first_name",
                    "last_year"];
 
 var df = new DataFrame({rows: data, columnNames: columnNames})
-  .arrange("last_year");/*
-  .mutate("cumulative", function(row) { return cumsum(row.pres_number); })
-  .select(["first_name", "last_name", "party", "pres_number"])
-  .rename({"first_name": "first", "last_name": "last"})
-  .groupBy("party")
-  .mutate("groupedCumulative", function(row) { return cumsum(row.pres_number); })
-  .summarize("totalGroupedCumulative", function(row) { return sum(row.groupedCumulative); });
-  */
+  .arrange("last_name")
+
 
 console.log(df);
 
